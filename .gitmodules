@@ -1,0 +1,3 @@
+[submodule "brain/modelgen/transformer"]
+	path = brain/modelgen/transformer
+	url = https://github.com/BorealisAI/scaleformer.git
