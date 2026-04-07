@@ -21,22 +21,22 @@
 #include "brain/workload/workload_defaults.h"
 
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
     /**
      * @brief 
      * 
      * @param frequnce[i][j]  0-2 | 0-1600
      */
-    peloton::matrix_eig GetWorkload(std::vector<std::vector<int> > &frequnce) {
+    LionBrain::matrix_eig GetWorkload(std::vector<std::vector<int> > &frequnce) {
 
-        peloton::matrix_eig data;
+        LionBrain::matrix_eig data;
         // 
         // 
         size_t num_feats = frequnce.size();
         size_t num_samples = frequnce[0].size();
 
-        data = peloton::matrix_eig::Zero(num_samples, num_feats);
+        data = LionBrain::matrix_eig::Zero(num_samples, num_feats);
 
         for (size_t i = 0; i < num_samples; ++ i) { // 0-1600
             for(size_t j = 0; j < num_feats; ++ j){ // 0-2
@@ -52,9 +52,10 @@ namespace brain {
     
     class my_predictor {
     public:
-        my_predictor(int preiod, int bptt, int horizon, float val_split){
+        my_predictor(int preiod, int feats, int bptt, int horizon, float val_split){
             PREIOD = preiod;              // 160; // 40 / 0.25
-            EPOCHS = 100;
+            NFEATS = feats;
+            EPOCHS = 300;
             CLIP_NORM = 0.25;
             BPTT = bptt;                  // PREIOD * 2;
             HORIZON = horizon;            // PREIOD * 3;
@@ -68,24 +69,24 @@ namespace brain {
             NORMALIZE = true;
             VAL_THESH = 0.05;
 
-            model = std::unique_ptr<peloton::brain::TimeSeriesLSTM>(new peloton::brain::TimeSeriesLSTM(
-                peloton::brain::LSTMWorkloadDefaults::NFEATS,
-                peloton::brain::LSTMWorkloadDefaults::NENCODED, peloton::brain::LSTMWorkloadDefaults::NHID,
-                peloton::brain::LSTMWorkloadDefaults::NLAYERS, peloton::brain::LSTMWorkloadDefaults::LR,
-                peloton::brain::LSTMWorkloadDefaults::DROPOUT_RATE,
-                peloton::brain::LSTMWorkloadDefaults::CLIP_NORM,
-                peloton::brain::LSTMWorkloadDefaults::BATCH_SIZE,
+            model = std::unique_ptr<LionBrain::brain::TimeSeriesLSTM>(new LionBrain::brain::TimeSeriesLSTM(
+                NFEATS,
+                LionBrain::brain::LSTMWorkloadDefaults::NENCODED, LionBrain::brain::LSTMWorkloadDefaults::NHID,
+                LionBrain::brain::LSTMWorkloadDefaults::NLAYERS, LionBrain::brain::LSTMWorkloadDefaults::LR,
+                LionBrain::brain::LSTMWorkloadDefaults::DROPOUT_RATE,
+                LionBrain::brain::LSTMWorkloadDefaults::CLIP_NORM,
+                LionBrain::brain::LSTMWorkloadDefaults::BATCH_SIZE,
                 BPTT, HORIZON,
-                peloton::brain::CommonWorkloadDefaults::INTERVAL,
+                LionBrain::brain::CommonWorkloadDefaults::INTERVAL,
                 EPOCHS));
-            n =  peloton::brain::Normalizer(NORMALIZE);
-            early_stop_patience = peloton::brain::CommonWorkloadDefaults::ESTOP_PATIENCE;
-            early_stop_delta = peloton::brain::CommonWorkloadDefaults::ESTOP_DELTA;
+            n =  LionBrain::brain::Normalizer(NORMALIZE);
+            early_stop_patience = LionBrain::brain::CommonWorkloadDefaults::ESTOP_PATIENCE;
+            early_stop_delta = LionBrain::brain::CommonWorkloadDefaults::ESTOP_DELTA;
             
             DCHECK(model->IsTFModel() == true);
         }
 
-        void train(peloton::matrix_eig& data){
+        void train(LionBrain::matrix_eig& data){
             auto val_interval = std::min<size_t>(LOG_INTERVAL, model->GetEpochs()); // size_t
 
             // Determine the split point
@@ -93,12 +94,12 @@ namespace brain {
                 data.rows() - static_cast<size_t>(data.rows() * VAL_SPLIT);
 
             // Split into train/test data
-            peloton::matrix_eig train_data = data.topRows(split_point);
+            LionBrain::matrix_eig train_data = data.topRows(split_point);
             n.Fit(train_data);
             train_data = n.Transform(train_data);
 
             // test_data for validate
-            peloton::matrix_eig test_data = 
+            LionBrain::matrix_eig test_data = 
                 n.Transform(data.bottomRows(
                     static_cast<size_t>(data.rows() - split_point)));
 
@@ -106,9 +107,11 @@ namespace brain {
             // float prev_train_loss = std::numeric_limits<float>::max();
             float val_loss = VAL_THESH * 2;
             std::vector<float> val_losses;
-            for (int epoch = 1; epoch <= model->GetEpochs() &&
-                                !brain::ModelUtil::EarlyStop(
-                                    val_losses, early_stop_patience, early_stop_delta);
+            for (int epoch = 1; epoch <= model->GetEpochs() 
+            // &&
+            //                     !brain::ModelUtil::EarlyStop(
+            //                         val_losses, early_stop_patience, early_stop_delta)
+                                    ;
                 epoch++) {
                 // std::cout << train_data << std::endl;
                 auto train_loss = model->TrainEpoch(train_data);
@@ -130,7 +133,7 @@ namespace brain {
             // DCHECK(val_loss < val_loss_thresh);
         }
     
-        peloton::matrix_eig predict(peloton::matrix_eig& data){
+        LionBrain::matrix_eig predict(LionBrain::matrix_eig& data){
             n.Fit(data);
             data = n.Transform(data);
 
@@ -147,7 +150,7 @@ namespace brain {
             
             LOG(INFO) << "Predict done.";
             /** output y and y_hat**/
-            std::ofstream ofs("/root/star/data/y_hat.xls", std::ios::trunc);
+            std::ofstream ofs("/home/star/data/y_hat.xls", std::ios::trunc);
             for(int i = 0; i < C_.rows(); i ++ ){
                 for(int j = 0; j < C_.cols(); j ++ ){
                     ofs << C_(i, j) << "\t";
@@ -157,14 +160,15 @@ namespace brain {
             ofs.close();
             return C_;
         }
-        peloton::brain::Normalizer& get_normalizer(){
+        LionBrain::brain::Normalizer& get_normalizer(){
             return n;
         }
     private:
-    std::unique_ptr<peloton::brain::TimeSeriesLSTM> model;
-    peloton::brain::Normalizer n;
+    std::unique_ptr<LionBrain::brain::TimeSeriesLSTM> model;
+    LionBrain::brain::Normalizer n;
 
     int PREIOD = 160; // 40 / 0.25
+    int NFEATS = 3; // 40 / 0.25
     int EPOCHS = 100;
     int CLIP_NORM = 0.25;
     int BPTT = PREIOD * 2;

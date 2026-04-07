@@ -1,29 +1,8 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// cluster.cpp
-//
-// Identification: src/brain/cluster.cpp
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "brain/cluster.h"
 #include "common/macros.h"
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// cluster.h
-//
-// Identification: src/include/brain/cluster.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
 
 
 #include <cmath>
@@ -33,7 +12,7 @@
 #include <vector>
 #include <stdint.h>
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 
 //===--------------------------------------------------------------------===//
@@ -182,4 +161,4 @@ double Cluster::CosineSimilarity(std::vector<double> &feature) {
 }
 
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain

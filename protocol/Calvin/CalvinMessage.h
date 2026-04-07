@@ -46,6 +46,26 @@ public:
     message.flush();
     return message_size;
   }
+
+  static std::size_t router_txn_done(Message &message, uint32_t tid) {
+
+    /*
+     * The structure of a read request: (tid, key offset, value)
+     */
+
+    auto message_size = MessagePiece::get_header_size() + sizeof(tid);
+
+    auto message_piece_header = MessagePiece::construct_message_piece_header(
+        static_cast<uint32_t>(CalvinMessage::READ_REQUEST), message_size,
+        0, 0);
+        
+    Encoder encoder(message.data);
+    encoder << message_piece_header;
+    encoder << tid;
+    message.flush();
+    return message_size;
+  }
+
 };
 
 class CalvinMessageHandler {
@@ -79,7 +99,7 @@ public:
     StringPiece stringPiece = inputPiece.toStringPiece();
     Decoder dec(stringPiece);
     dec >> tid >> key_offset;
-    DCHECK(tid < txns.size());
+    DCHECK(tid < txns.size()) << tid << " " << txns.size();
     DCHECK(key_offset < txns[tid]->readSet.size());
     CalvinRWKey &readKey = txns[tid]->readSet[key_offset];
     dec.read_n_bytes(readKey.get_value(), value_size);

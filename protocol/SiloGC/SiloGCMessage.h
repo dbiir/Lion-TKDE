@@ -25,6 +25,7 @@ enum class SiloGCMessage {
   ABORT_REQUEST,
   WRITE_REQUEST,
   REPLICATION_REQUEST,
+  REPLICATION_RESPONSE,
   NFIELDS
 };
 
@@ -174,6 +175,10 @@ public:
     table.serialize_value(encoder, value);
     encoder << commit_tid;
     message.flush();
+
+    // LOG(INFO) << "new_replication_message " << message.get_source_node_id() << "->" << message.get_dest_node_id() 
+    //           << " " << *(int*)key;
+
     return message_size;
   }
 };
@@ -300,6 +305,8 @@ public:
 
     bool success;
     uint64_t latest_tid = SiloHelper::lock(tid, success);
+    if(success)
+      VLOG(DEBUG_V16) << "w-lock " << *(int*) key;
 
     stringPiece.remove_prefix(key_size);
     star::Decoder dec(stringPiece);
@@ -530,6 +537,8 @@ public:
     std::atomic<uint64_t> &tid = table.search_metadata(key);
     table.deserialize_value(key, valueStringPiece);
 
+    VLOG(DEBUG_V16) << "w-unlock " << *(int*) key;
+    
     SiloHelper::unlock(tid, commit_tid);
   }
 
@@ -566,6 +575,9 @@ public:
     Decoder dec(stringPiece);
     dec >> commit_tid;
 
+    // LOG(INFO) << " handle REPLICATION_REQUEST from " << responseMessage.get_source_node_id() << " to " << responseMessage.get_dest_node_id() << " " << *(int*)key;
+
+
     DCHECK(dec.size() == 0);
 
     std::atomic<uint64_t> &tid = table.search_metadata(key);
@@ -578,7 +590,52 @@ public:
     } else {
       SiloHelper::unlock(tid);
     }
+
+    auto message_size = MessagePiece::get_header_size();
+                        
+    auto message_piece_header = MessagePiece::construct_message_piece_header(
+        static_cast<uint32_t>(SiloGCMessage::REPLICATION_RESPONSE), message_size,
+        table_id, partition_id);
+    star::Encoder encoder(responseMessage.data);
+    encoder << message_piece_header;
+
+    responseMessage.flush();
+
   }
+
+  static void replication_response_handler(MessagePiece inputPiece,
+                                          Message &responseMessage,
+                                          ITable &table, Transaction *txn
+) {
+
+    DCHECK(inputPiece.get_message_type() ==
+           static_cast<uint32_t>(SiloGCMessage::REPLICATION_RESPONSE));
+    auto table_id = inputPiece.get_table_id();
+    auto partition_id = inputPiece.get_partition_id();
+
+    DCHECK(table_id == table.tableID());
+    DCHECK(partition_id == table.partitionID());
+    DCHECK(inputPiece.get_message_length() == MessagePiece::get_header_size());
+    
+    // if(txn->pendingResponses > 0){
+    //   txn->pendingResponses--;
+    // }
+    
+    txn->network_size += inputPiece.get_message_length();
+
+    // auto stringPiece = inputPiece.toStringPiece();
+    // Decoder dec(stringPiece);
+    // dec >> txn_id;
+
+    // stringPiece = inputPiece.toStringPiece();
+    // stringPiece.remove_prefix(sizeof(txn_id));
+
+    // const void *key_ = stringPiece.data();
+    // key = *(int*) key_;
+
+    // LOG(INFO) << "replication_response_handler: " << responseMessage.get_source_node_id() << "->" << responseMessage.get_dest_node_id(); //  << " " << key;
+  }
+
 
   static std::vector<
       std::function<void(MessagePiece, Message &, ITable &, Transaction *)>>
@@ -596,6 +653,7 @@ public:
     v.push_back(SiloGCMessageHandler::abort_request_handler);
     v.push_back(SiloGCMessageHandler::write_request_handler);
     v.push_back(SiloGCMessageHandler::replication_request_handler);
+    v.push_back(SiloGCMessageHandler::replication_response_handler);
     return v;
   }
 };

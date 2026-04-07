@@ -1,14 +1,4 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// lstm.cpp
-//
-// Identification: src/brain/workload/lstm.cpp
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "brain/workload/lstm.h"
@@ -17,23 +7,13 @@
 #include "brain/util/tf_session_entity/tf_session_entity_input.h"
 #include "brain/util/tf_session_entity/tf_session_entity_output.h"
 // #include "util/file_util.h"
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// lstm.h
-//
-// Identification: src/include/brain/workload/lstm.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
+
 
 #include <numeric>
 #include <string>
 #include "brain/workload/base_tf.h"
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 
 template <typename Type>
@@ -121,6 +101,7 @@ TimeSeriesLSTM::TimeSeriesLSTM(int nfeats, int nencoded, int nhid, int nlayers,
   tf_session_entity_->ImportGraph(graph_path_);
   // Initialize the model
   TFInit();
+  std::cout << ToString();
 }
 
 std::string TimeSeriesLSTM::ConstructModelArgsString() const {
@@ -158,7 +139,7 @@ void TimeSeriesLSTM::Fit(const matrix_eig &X, const matrix_eig &y, int bsz) {
   auto data_batch = EigenUtil::Flatten(X);
   auto target_batch = EigenUtil::Flatten(y);
   int seq_len = data_batch.size() / (bsz * nfeats_);
-  std::vector<int64_t> dims{bsz, seq_len, nfeats_};
+  std::vector<int64_t> dims{bsz, seq_len, nfeats_}; // 2 160 3
   std::vector<TfFloatIn *> inputs_optimize{
       new TfFloatIn(data_batch.data(), dims, "data_"),
       new TfFloatIn(target_batch.data(), dims, "target_"),
@@ -181,7 +162,9 @@ float TimeSeriesLSTM::TrainEpoch(const matrix_eig &data) {
   std::vector<matrix_eig> y_batch, y_hat_batch;
   for (size_t i = 0; i < data_batches.size(); i++) {
     std::vector<matrix_eig> &data_batch_eig = data_batches[i];
-    std::vector<matrix_eig> &target_batch_eig = target_batches[i];
+    std::vector<matrix_eig> &target_batch_eig = target_batches[i]; 
+    // rows = period * bptt
+    // cols = feats
     matrix_eig X_batch = EigenUtil::VStack(data_batch_eig);
     int bsz = static_cast<int>(data_batch_eig.size());
     // Fit
@@ -269,4 +252,4 @@ float TimeSeriesLSTM::ValidateEpoch(const matrix_eig &data, matrix_eig &y, matri
 }
 
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain

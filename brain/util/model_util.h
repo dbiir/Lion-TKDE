@@ -1,35 +1,13 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// model_util.cpp
-//
-// Identification: src/brain/util/model_util.cpp
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "brain/util/model_util.h"
 #include "brain/workload/base_tf.h"
 
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// model_util.h
-//
-// Identification: src/include/brain/util/model_util.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
-
 
 #include "brain/util/eigen_util.h"
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 
 // Forward declarations
@@ -276,4 +254,4 @@ bool ModelUtil::EarlyStop(vector_t val_losses, size_t patience, float delta) {
 }
 
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain

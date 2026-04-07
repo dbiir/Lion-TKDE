@@ -1,37 +1,15 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// eigen_util.cpp
-//
-// Identification: src/brain/util/eigen_util.cpp
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "brain/util/eigen_util.h"
 #include <random>
-
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// eigen_util.h
-//
-// Identification: src/include/brain/util/eigen_util.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
 
 
 #include <algorithm>
 #include <vector>
 #include "common/internal_types.h"
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 
 class EigenUtil {
@@ -190,4 +168,4 @@ matrix_eig EigenUtil::PadTop(const matrix_eig &mat, float pad_value,
 }
 
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain

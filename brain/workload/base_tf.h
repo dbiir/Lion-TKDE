@@ -1,14 +1,4 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// base_tf.cpp
-//
-// Identification: src/brain/workload/base_tf.cpp
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "brain/workload/base_tf.h"
@@ -17,24 +7,13 @@
 #include "brain/util/tf_session_entity/tf_session_entity_output.h"
 // #include "util/file_util.h"
 
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// base_tf.h
-//
-// Identification: src/include/brain/workload/base_tf.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
 
 
 #include <memory>
 #include "brain/util/eigen_util.h"
 #include "brain/util/tf_session_entity/tf_session_entity_io.h"
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 
 /**
@@ -215,9 +194,9 @@ BaseTFModel::BaseTFModel(const std::string &modelgen_path,
                          const std::string &pymodel_path,
                          const std::string &graph_path)
     : // BaseModel(),
-      modelgen_path_(("/root/star/" + modelgen_path)), // peloton::FileUtil::GetRelativeToRootPath
-      pymodel_path_(("/root/star/" + pymodel_path)), // peloton::FileUtil::GetRelativeToRootPath(
-      graph_path_(("/root/star/" + graph_path)) { // peloton::FileUtil::GetRelativeToRootPath
+      modelgen_path_(("/home/star/" + modelgen_path)), // LionBrain::FileUtil::GetRelativeToRootPath
+      pymodel_path_(("/home/star/" + pymodel_path)), // LionBrain::FileUtil::GetRelativeToRootPath(
+      graph_path_(("/home/star/" + graph_path)) { // LionBrain::FileUtil::GetRelativeToRootPath
   tf_session_entity_ = std::unique_ptr<TfSessionEntity<float, float>>(
       new TfSessionEntity<float, float>());
   // PELOTON_ASSERT(FileUtil::Exists(pymodel_path_));
@@ -238,4 +217,4 @@ void BaseTFModel::GenerateModel(const std::string &args_str) {
   // PELOTON_ASSERT(FileUtil::Exists(graph_path_));
 }
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain

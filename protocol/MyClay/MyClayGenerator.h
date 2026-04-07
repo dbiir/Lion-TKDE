@@ -26,7 +26,8 @@ public:
   using WorkloadType = Workload;
   using ProtocolType = Protocol;
   using DatabaseType = typename WorkloadType::DatabaseType;
-  using TransactionType = typename WorkloadType::TransactionType;
+  using TransactionType = MyClayTransaction;
+  
   using ContextType = typename DatabaseType::ContextType;
   using RandomType = typename DatabaseType::RandomType;
   using MessageType = typename ProtocolType::MessageType;
@@ -34,14 +35,17 @@ public:
   using MessageHandlerType = MyClayMessageHandler<DatabaseType>;
 
   using StorageType = typename WorkloadType::StorageType;
-
+  int pin_thread_id_ = 3;
   MyClayGenerator(std::size_t coordinator_id, std::size_t id, DatabaseType &db,
            const ContextType &context, std::atomic<uint32_t> &worker_status,
            std::atomic<uint32_t> &n_complete_workers,
-           std::atomic<uint32_t> &n_started_workers)
+           std::atomic<uint32_t> &n_started_workers,
+           clay::ScheduleMeta &schedule_meta
+           )
       : Worker(coordinator_id, id), db(db), context(context),
         worker_status(worker_status), n_complete_workers(n_complete_workers),
         n_started_workers(n_started_workers),
+        schedule_meta(schedule_meta),
         partitioner(std::make_unique<LionDynamicPartitioner<Workload> >(
             coordinator_id, context.coordinator_num, db)),
         random(reinterpret_cast<uint64_t>(this)),
@@ -69,22 +73,163 @@ public:
     router_transaction_done.store(0);
     router_transactions_send.store(0);
 
-    is_full_signal.store(0);
-    generator_core_id.resize(context.coordinator_num);
+    for(int i = 0 ; i < 20 ; i ++ ){
+      is_full_signal_self[i].store(0);
+    }
+
+    txns_coord_cost.resize(context.batch_size, std::vector<int>(context.coordinator_num, 0));
 
     generator_num = 1;
+
+    generator_core_id.resize(context.coordinator_num);
+    dispatcher_core_id.resize(context.coordinator_num);
+
+    pin_thread_id_ = 3 + 2 * 2 + context.worker_num;
+
+    for(size_t i = 0 ; i < generator_num; i ++ ){
+      generator_core_id[i] = pin_thread_id_ ++ ;
+    }
+
+    for(size_t i = 0 ; i < context.coordinator_num; i ++ ){
+      dispatcher_core_id[i] = pin_thread_id_ + id * context.coordinator_num + i;
+    }
+    dispatcher_num = context.worker_num * context.coordinator_num;
+    cur_txn_num = context.batch_size / dispatcher_num ; // * context.coordinator_num
+
+    for (auto n = 0u; n < context.coordinator_num; n++) {
+          
+            dispatcher.emplace_back([&](int n, int worker_id) {
+              
+              ExecutorStatus status = static_cast<ExecutorStatus>(worker_status.load());
+              do {
+                status = static_cast<ExecutorStatus>(worker_status.load());
+                std::this_thread::sleep_for(std::chrono::microseconds(5));
+              } while (status != ExecutorStatus::START);  
+            
+
+            int dispatcher_id  = worker_id * context.coordinator_num + n;
+            while(is_full_signal_self[dispatcher_id].load() == false){
+                bool success = prepare_transactions_to_run(workload, storages[dispatcher_id],
+                                      transactions_queue_self[dispatcher_id]
+                                    );
+                if(!success){ // full
+                    is_full_signal_self[dispatcher_id].store(true);
+                } 
+            }
+            
+            while(status != ExecutorStatus::EXIT){
+                  // wait for start
+                  while((schedule_meta.start_schedule.load() == 0 
+                      || schedule_meta.done_schedule.load() == context.worker_num * context.coordinator_num)
+                  && status != ExecutorStatus::EXIT){
+                    status = static_cast<ExecutorStatus>(worker_status.load());
+                    if(is_full_signal_self[dispatcher_id].load() == true){
+                      std::this_thread::sleep_for(std::chrono::microseconds(5));
+                      continue;
+                    }
+
+                    bool success = prepare_transactions_to_run(workload, storages[dispatcher_id],
+                      transactions_queue_self[dispatcher_id]
+                    );
+                    if(!success){ // full
+                      is_full_signal_self[dispatcher_id].store(true);
+                    }                    
+                  }
+                  std::vector<std::shared_ptr<simpleTransaction>> &txns = schedule_meta.node_txns;
+
+                  scheduler_transactions(dispatcher_num, dispatcher_id);
+
+                  int idx_offset = dispatcher_id * cur_txn_num;
+
+                  for(int j = 0; j < cur_txn_num; j ++ ){
+                    int idx = idx_offset + j;
+                    coordinator_send[txns[idx]->destination_coordinator] ++ ;
+                    router_request(router_send_txn_cnt, txns[idx]);   
+
+                    if(j % context.batch_flush == 0){
+                      for(size_t i = 0 ; i < context.coordinator_num; i ++ ){
+                        messages_mutex[i]->lock();
+                        flush_message(async_messages, i);
+                        messages_mutex[i]->unlock();
+                      }
+                    }
+                  }
+                  for(size_t i = 0 ; i < context.coordinator_num; i ++ ){
+                    messages_mutex[i]->lock();
+                    flush_message(async_messages, i);
+                    messages_mutex[i]->unlock();
+                  }
+
+                  schedule_meta.done_schedule.fetch_add(1);
+                  status = static_cast<ExecutorStatus>(worker_status.load());
+                  LOG(INFO) << "done_schedule: " << schedule_meta.done_schedule.load();
+                  // wait for end
+                  while(schedule_meta.done_schedule.load() < context.worker_num * context.coordinator_num && status != ExecutorStatus::EXIT){
+                    auto i = schedule_meta.done_schedule.load();
+                    std::this_thread::sleep_for(std::chrono::microseconds(5));
+                    status = static_cast<ExecutorStatus>(worker_status.load());
+                  }
+                  LOG(INFO) << "done_schedule: " << schedule_meta.done_schedule.load();
+
+                  is_full_signal_self[dispatcher_id].store(false);
+
+                  schedule_meta.all_done_schedule.fetch_add(1);
+                }
+            }, n, this->id);
+
+            if (context.cpu_affinity) {
+            LOG(INFO) << "dispatcher_core_id[n]: " << dispatcher_core_id[n] 
+                      << " work_id" << this->id;
+              ControlMessageFactory::pin_thread_to_core(context, dispatcher[n], dispatcher_core_id[n]);
+            }
+        }
+
   }
 
-  bool prepare_transactions_to_run(WorkloadType& workload, StorageType& storage){
+    void router_request(std::vector<int>& router_send_txn_cnt, std::shared_ptr<simpleTransaction> txn) {
+    // router transaction to coordinators
+    size_t coordinator_id_dst = txn->destination_coordinator;
+
+    messages_mutex[coordinator_id_dst]->lock();
+    size_t router_size = ControlMessageFactory::new_router_transaction_message(
+        *async_messages[coordinator_id_dst].get(), 0, *txn, 
+        RouterTxnOps::TRANSFER);
+    // flush_message(async_messages, coordinator_id_dst);
+    messages_mutex[coordinator_id_dst]->unlock();
+
+    router_send_txn_cnt[coordinator_id_dst]++;
+    n_network_size.fetch_add(router_size);
+    router_transactions_send.fetch_add(1);
+  };
+
+  bool prepare_transactions_to_run(WorkloadType& workload, StorageType& storage,
+      ShareQueue<simpleTransaction*, 40960>& transactions_queue_self_){
     /** 
      * @brief 准备需要的txns
      * @note add by truth 22-01-24
      */
       std::size_t hot_area_size = context.partition_num / context.coordinator_num;
-
       std::size_t partition_id = random.uniform_dist(0, context.partition_num - 1); // get_random_partition_id(n, context.coordinator_num);
-      std::size_t partition_id_ = partition_id / hot_area_size * hot_area_size + 
-                                  partition_id / hot_area_size % context.coordinator_num; // get_partition_id();
+      // 
+      size_t skew_factor = random.uniform_dist(1, 100);
+      if (context.skew_factor >= skew_factor) {
+        // 0 >= 50 
+          partition_id = (0 + skew_factor * context.coordinator_num) % context.partition_num;
+      } else {
+        // 0 < 50
+        //正常
+      }
+      // 
+      std::size_t partition_id_;
+      if(context.skew_factor >= skew_factor) {
+        partition_id_ = partition_id / hot_area_size * hot_area_size;
+
+      } else {
+        partition_id_ = partition_id / hot_area_size * hot_area_size + 
+                                partition_id / hot_area_size % context.coordinator_num;;
+      }
+
+      // 
       std::unique_ptr<TransactionType> cur_transaction = workload.next_transaction(context, partition_id_, storage);
       
       simpleTransaction* txn = new simpleTransaction();
@@ -99,10 +244,9 @@ public:
         DCHECK(txn->is_distributed == false);
       }
     
-    // VLOG_IF(DEBUG_V6, id == 0) << "transactions_queue: " << transactions_queue.size();
-    return transactions_queue.push_no_wait(txn);
-  }
 
+    return transactions_queue_self_.push_no_wait(txn); // txn->partition_id % context.coordinator_num [0]
+  }
   void router_fence(){
     while(router_transaction_done.load() != router_transactions_send.load()){
       int a = router_transaction_done.load();
@@ -113,102 +257,276 @@ public:
     router_transactions_send.store(0);
   }
 
-  std::unordered_map<int, int> txn_nodes_involved(simpleTransaction* t, int& max_node, bool is_dynamic) {
-      std::unordered_map<int, int> from_nodes_id;
+  void txn_nodes_involved(simpleTransaction* t) {
+    
+      std::unordered_map<int, int> from_nodes_id;           // dynamic replica nums
+      std::unordered_map<int, int> from_nodes_id_secondary; // secondary replica nums
+      // std::unordered_map<int, int> nodes_cost;              // cost on each node
+      std::vector<int> coordi_nums_;
+
+      
       size_t ycsbTableID = ycsb::ycsb::tableID;
       auto query_keys = t->keys;
-      int max_cnt = 0;
+
 
       for (size_t j = 0 ; j < query_keys.size(); j ++ ){
         // LOG(INFO) << "query_keys[j] : " << query_keys[j];
         // judge if is cross txn
         size_t cur_c_id = -1;
-        if(is_dynamic){
+        size_t secondary_c_ids;
+
           // look-up the dynamic router to find-out where
-          cur_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, ycsbTableID, (void*)& query_keys[j]);
-        } else {
-          // cal the partition to figure out the coordinator-id
-          cur_c_id = query_keys[j] / context.keysPerPartition % context.coordinator_num;
-        }
+          auto router_table = db.find_router_table(ycsbTableID);// , master_coordinator_id);
+          auto tab = static_cast<RouterValue*>(router_table->search_value((void*) &query_keys[j]));
+
+          cur_c_id = tab->get_dynamic_coordinator_id();
+          secondary_c_ids = tab->get_secondary_coordinator_id();
+
         if(!from_nodes_id.count(cur_c_id)){
           from_nodes_id[cur_c_id] = 1;
+          // 
+          coordi_nums_.push_back(cur_c_id);
         } else {
           from_nodes_id[cur_c_id] += 1;
         }
-        if(from_nodes_id[cur_c_id] > max_cnt){
-          max_cnt = from_nodes_id[cur_c_id];
-          max_node = cur_c_id;
+
+        // key on which node
+        for(size_t i = 0; i <= context.coordinator_num; i ++ ){
+            if(secondary_c_ids & 1 && i != cur_c_id){
+                from_nodes_id_secondary[i] += 1;
+            }
+            secondary_c_ids = secondary_c_ids >> 1;
         }
       }
-     return from_nodes_id;
+
+      int max_cnt = INT_MIN;
+      int max_node = -1;
+
+      for(size_t cur_c_id = 0 ; cur_c_id < context.coordinator_num; cur_c_id ++ ){
+        int cur_score = 0;
+        size_t cnt_master = from_nodes_id[cur_c_id];
+        size_t cnt_secondary = from_nodes_id_secondary[cur_c_id];
+        if(cnt_master == query_keys.size()){
+          cur_score = 100 * (int)query_keys.size();
+        // } else if(cnt_secondary + cnt_master == query_keys.size()){
+        //   cur_score = 50 * cnt_master;// + 25 * cnt_secondary;
+        } else {
+          cur_score = 25 * cnt_master;// + 15 * cnt_secondary;
+        }
+        if(cur_score > max_cnt){
+          max_node = cur_c_id;
+          max_cnt = cur_score;
+        }
+        txns_coord_cost[t->idx_][cur_c_id] = 10 * (int)query_keys.size() - cur_score;
+      }
+
+
+      if(context.random_router > 0){
+        // 
+        int coords_num = (int)coordi_nums_.size();
+        size_t random_value = random.uniform_dist(0, 100);
+        if(random_value > context.random_router){
+          size_t random_coord_id = random.uniform_dist(0, coords_num - 1);
+          if(random_coord_id > context.coordinator_num){
+            VLOG(DEBUG_V8) << "bad  " << t->keys[0] << " " << t->keys[1] << " router to -> " << max_node << " " << from_nodes_id[max_node] << " " << coordi_nums_[random_coord_id] << " " << from_nodes_id[coordi_nums_[random_coord_id]];
+          }
+          max_node = coordi_nums_[random_coord_id];
+        }
+      } 
+
+
+      t->destination_coordinator = max_node;
+      t->execution_cost = 10 * (int)query_keys.size() - max_cnt;
+
+     return;
    }
 
-  int select_best_node(simpleTransaction* t) {
+  void txn_nodes_involved_tpcc(simpleTransaction* t) {
     
-    int max_node = -1;
-    // if(t->is_distributed){
-      std::unordered_map<int, int> result;
-      result = txn_nodes_involved(t, max_node, true);
-    // } else {
-    //   max_node = t->partition_id % context.coordinator_num;
-    // }
+      int from_nodes_id[MAX_COORDINATOR_NUM] = {0};              // dynamic replica nums
+      int from_nodes_id_secondary[MAX_COORDINATOR_NUM] = {0};; // secondary replica nums
+      // std::unordered_map<int, int> nodes_cost;              // cost on each node
+      std::vector<int> query_keys;
+      star::tpcc::NewOrderQuery keys;
+      keys.unpack_transaction(*t);
+      // warehouse_key
+      auto warehouse_key = tpcc::warehouse::key(keys.W_ID);
+        size_t warehouse_coordinator_id = static_cast<RouterValue*>(db.find_router_table(tpcc::warehouse::tableID)->search_value((void*)&warehouse_key))->get_dynamic_coordinator_id();
+      from_nodes_id[warehouse_coordinator_id] += 1;
+      query_keys.push_back(warehouse_coordinator_id);
+      // district_key
+      auto district_key = tpcc::district::key(keys.W_ID, keys.D_ID);
+        size_t district_coordinator_id = static_cast<RouterValue*>(db.find_router_table(tpcc::district::tableID)->search_value((void*)&district_key))->get_dynamic_coordinator_id();
+      from_nodes_id[district_coordinator_id] += 1;
+      query_keys.push_back(district_coordinator_id);
+      // customer_key
+      auto customer_key = tpcc::customer::key(keys.W_ID, keys.D_ID, keys.C_ID);
+        size_t customer_coordinator_id = static_cast<RouterValue*>(db.find_router_table(tpcc::customer::tableID)->search_value((void*)&customer_key))->get_dynamic_coordinator_id();
+      from_nodes_id[customer_coordinator_id] += 1;
+      query_keys.push_back(customer_coordinator_id);
+        
+      for(size_t i = 0 ; i < t->keys.size() - 3; i ++ ){
+        auto router_table = db.find_router_table(tpcc::stock::tableID);
 
-    DCHECK(max_node != -1);
-    return max_node;
-  }
-  
-  int router_transmit_request(group_commit::ShareQueue<std::shared_ptr<myMove<WorkloadType>>>& move_plans){
-    // transmit_request_queue
-    auto new_transmit_generate = [&](int n){
-      simpleTransaction* s = new simpleTransaction();
-      s->is_transmit_request = true;
-      s->partition_id = n;
-      return s;
-    };
-    // pull request
-    std::vector<simpleTransaction*> transmit_requests(context.coordinator_num);
-    for(size_t i = 0 ; i < transmit_requests.size(); i ++ ){
-      transmit_requests[i] = new_transmit_generate(i);
-    }
+        auto stock_key = tpcc::stock::key(keys.INFO[i].OL_SUPPLY_W_ID, keys.INFO[i].OL_I_ID);
+        auto tab = static_cast<RouterValue*>(router_table->search_value((void*)&stock_key));
+        size_t stock_coordinator_id = tab->get_dynamic_coordinator_id();
 
-    const int transmit_block_size = 100;
+        
+        from_nodes_id[stock_coordinator_id] += 1;
+        query_keys.push_back(stock_coordinator_id);
+      }
 
-    int cur_move_size = move_plans.size();
-    int move_size = 0;
-    // pack up move-steps to transmit request
-    for(int i = 0 ; i < cur_move_size; i ++ ){
-      bool success = false;
-      std::shared_ptr<myMove<WorkloadType>> cur_move = move_plans.pop_no_wait(success);
-      DCHECK(success == true);
+      int max_cnt = INT_MIN;
+      int max_node = -1;
 
-      for(auto move_record: cur_move->records){
-        if(move_record.src_coordinator_id != cur_move->dest_coordinator_id){
-          //
-          if(move_size == 0){
-            move_size = 1;
-          }
-          transmit_requests[cur_move->dest_coordinator_id]->keys.push_back(move_record.record_key_);
-          transmit_requests[cur_move->dest_coordinator_id]->update.push_back(true);
+      size_t replica_most_cnt = INT_MIN;
+      int replica_max_node = -1;
 
-          if(transmit_requests[cur_move->dest_coordinator_id]->keys.size() > transmit_block_size){
-            // added to the router
-            transmit_request_queue.push_no_wait(transmit_requests[cur_move->dest_coordinator_id]);
-            transmit_requests[cur_move->dest_coordinator_id] = new_transmit_generate(cur_move->dest_coordinator_id);
-            move_size ++ ;
+
+
+
+      for(size_t cur_c_id = 0 ; cur_c_id < context.coordinator_num; cur_c_id ++ ){
+        int cur_score = 0; // 5 - 5 * (busy_local[cur_c_id] * 1.0 / cur_txn_num); // 1 ~ 10
+
+        size_t cnt_master = from_nodes_id[cur_c_id];
+        size_t cnt_secondary = from_nodes_id_secondary[cur_c_id];
+        if(context.migration_only){
+          cur_score += 100 * cnt_master;
+        } else {
+          if(cnt_master == query_keys.size()){
+            cur_score += 100 * (int)query_keys.size();
+          } else if(cnt_secondary + cnt_master == query_keys.size()){
+            cur_score += 50 * cnt_master + 25 * cnt_secondary;
+          } else {
+            cur_score += 25 * cnt_master + 15 * cnt_secondary;
           }
         }
+
+        if(cur_score > max_cnt){
+          max_node = cur_c_id;
+          max_cnt = cur_score;
+        }
+
+        if(cnt_secondary > replica_most_cnt){
+          replica_max_node = cur_c_id;
+          replica_most_cnt = cnt_secondary;
+        }
+
+        // txns_coord_cost_[t->idx_][cur_c_id] = 10 * (int)query_keys.size() - cur_score;
+        // replicate_busy_local[cur_c_id] += cnt_secondary;
+      }
+
+
+      // if(context.random_router > 0){
+      //   // 
+      //   // size_t random_value = random.uniform_dist(0, 9);
+      //   size_t coordinator_id = (keys.W_ID - 1) % context.coordinator_num;
+      //   max_node = coordinator_id; // query_keys[0];
+        
+      // } 
+
+
+      t->destination_coordinator = max_node;
+      t->execution_cost = 10 * (int)query_keys.size() - max_cnt;
+      t->is_real_distributed = (max_cnt == 100 * (int)query_keys.size()) ? false : true;
+
+      t->replica_heavy_node = replica_max_node;
+      // if(t->is_real_distributed){
+      //   std::string debug = "";
+      //   for(size_t i = 0 ; i < context.coordinator_num; i ++ ){
+      //     debug += std::to_string(txns_coord_cost_[t->idx_][i]) + " ";
+      //   }
+      //   LOG(INFO) << t->keys[0] << " " << t->keys[1] << " " << debug;
+      // }
+      size_t cnt_master = from_nodes_id[max_node];
+      size_t cnt_secondary = from_nodes_id_secondary[max_node];
+
+      // if(cnt_secondary + cnt_master != query_keys.size()){
+      //   distributed_outfile_excel << t->keys[0] << "\t" << t->keys[1] << "\t" << max_node << "\n";
+      // }
+
+     return;
+   }
+
+
+
+
+  void scheduler_transactions(int dispatcher_num, int dispatcher_id){    
+
+    if(transactions_queue_self[dispatcher_id].size() < (size_t)cur_txn_num * dispatcher_num){
+      DCHECK(false);
+    }
+    // int cur_txn_num = context.batch_size * context.coordinator_num / dispatcher_num;
+    int idx_offset = dispatcher_id * cur_txn_num;
+
+    auto & txns            = schedule_meta.node_txns;
+    auto & busy_           = schedule_meta.node_busy;
+    auto & txns_coord_cost = schedule_meta.txns_coord_cost;
+    
+    auto staart = std::chrono::steady_clock::now();
+
+    double cur_timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
+                 std::chrono::steady_clock::now() - start_time)
+                 .count() * 1.0 / 1000 / 1000;
+    int workload_type = ((int)cur_timestamp / context.workload_time) + 1;// which_workload_(crossPartition, (int)cur_timestamp);
+    // find minimal cost routing 
+    LOG(INFO) << "txn_id.load() = " << schedule_meta.txn_id.load() << " " << cur_txn_num;
+    
+    std::vector<int> busy_local(context.coordinator_num, 0);
+    int real_distribute_num = 0;
+
+    for(int i = 0; i < cur_txn_num; i ++ ){
+      bool success = false;
+      std::shared_ptr<simpleTransaction> new_txn(transactions_queue_self[dispatcher_id].pop_no_wait(success)); 
+      int idx = i + idx_offset;
+
+      txns[idx] = std::move(new_txn);
+      // if(i < 2){
+      //   LOG(INFO) << i << " " << txns[idx]->is_distributed;
+      // }
+      auto& txn = txns[idx];
+      txn->idx_ = idx;      
+
+      DCHECK(success == true);
+
+      if(WorkloadType::which_workload == myTestSet::YCSB){
+        txn_nodes_involved(txn.get());
+      } else {
+        txn_nodes_involved_tpcc(txn.get());
+      }
+
+      if(txn->is_real_distributed){
+        real_distribute_num += 1;
+      }
+      busy_local[txn->destination_coordinator] += 1;
+    }
+
+    schedule_meta.txn_id.fetch_add(1);
+    {
+      std::lock_guard<std::mutex> l(schedule_meta.l);
+      for(size_t i = 0; i < context.coordinator_num; i ++ ){
+          busy_[i] += busy_local[i];
       }
     }
 
-    for(size_t i = 0 ; i < transmit_requests.size(); i ++ ){
-      if(transmit_requests[i]->keys.size() > 0){
-        transmit_request_queue.push_no_wait(transmit_requests[i]);
-      }
+    double cur_timestamp__ = std::chrono::duration_cast<std::chrono::microseconds>(
+                 std::chrono::steady_clock::now() - staart)
+                 .count() * 1.0 / 1000 ;
+
+
+              
+    if(real_distribute_num > 0){
+      LOG(INFO) << "real_distribute_num = " << real_distribute_num;
     }
-    return move_size;
+
+    LOG(INFO) << "scheduler : " << cur_timestamp__ << " " << schedule_meta.txn_id.load();
+    while((int)schedule_meta.txn_id.load() < dispatcher_num){
+      auto i = schedule_meta.txn_id.load();
+      std::this_thread::sleep_for(std::chrono::microseconds(5));
+    }
   }
 
-  int pin_thread_id_ = 3;
 
   void start() override {
 
@@ -225,84 +543,7 @@ public:
     std::queue<std::unique_ptr<TransactionType>> q;
     std::size_t count = 0;
 
-
-    // generators
-    std::vector<std::thread> generators;
-    for (auto n = 0u; n < generator_num; n++) {
-      generators.emplace_back([&](int n) {
-        ExecutorStatus status = static_cast<ExecutorStatus>(worker_status.load());
-        while(status != ExecutorStatus::EXIT){
-          // 
-          bool is_not_full = prepare_transactions_to_run(workload, storage);
-          if(!is_not_full){
-            is_full_signal.store(1);
-            while(is_full_signal.load() == 1 && status != ExecutorStatus::EXIT){
-              std::this_thread::sleep_for(std::chrono::microseconds(5));
-              status = static_cast<ExecutorStatus>(worker_status.load());
-            }
-          }
-          status = static_cast<ExecutorStatus>(worker_status.load());
-        }
-        LOG(INFO) << "generators " << n << " exits.";
-      }, n);
-
-      if (context.cpu_affinity) {
-        ControlMessageFactory::pin_thread_to_core(context, generators[n], pin_thread_id_);
-        generator_core_id[n] = pin_thread_id_ ++ ;
-      }
-    }
-    // wait 
-    while(is_full_signal.load() == 0){
-      std::this_thread::sleep_for(std::chrono::microseconds(5));
-    }
-
-    // clay: do the clustering 
-    std::vector<std::thread> clay;
-    my_clay = std::make_unique<Clay<WorkloadType>>(context, db, worker_status);
-    clay.emplace_back(&Clay<WorkloadType>::start, my_clay.get());
-    ControlMessageFactory::pin_thread_to_core(context, clay[0], pin_thread_id_);
-    pin_thread_id_ ++ ;
-
-    static int cur_workload_type = 0;
-
-
-    // transmiter: do the transfer for the clay and whole system
-    std::vector<std::thread> transmiter;
-    transmiter.emplace_back([&]() {
-      ExecutorStatus status = static_cast<ExecutorStatus>(worker_status.load());
-      while(status != ExecutorStatus::EXIT){
-        // 
-        bool is_movable = my_clay->movable_flag.load();
-        if(!is_movable){
-          while(my_clay->movable_flag.load() == false && status != ExecutorStatus::EXIT){
-            std::this_thread::sleep_for(std::chrono::microseconds(5));
-            status = static_cast<ExecutorStatus>(worker_status.load());
-          }
-        } 
-        
-        int num = router_transmit_request(my_clay->move_plans);
-        if(num > 0){
-          LOG(INFO) << "router transmit request " << num; 
-        }
-        my_clay->movable_flag.store(false);
-        
-        double cur_timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
-                    std::chrono::steady_clock::now() - start_time)
-                    .count() * 1.0 / 1000 / 1000;
-
-        if(cur_workload_type != cur_timestamp / context.workload_time){
-          cur_workload_type = cur_timestamp / context.workload_time;
-          my_clay->clear_graph();
-          LOG(INFO) << " workload type changed to [" << cur_workload_type << "]. Clear Graph.";
-        }
-        
-        status = static_cast<ExecutorStatus>(worker_status.load());
-      }
-      LOG(INFO) << "transmiter " << " exits.";
-    });
-    ControlMessageFactory::pin_thread_to_core(context, transmiter[0], pin_thread_id_);
-    pin_thread_id_ ++ ;
-    
+    int cur_workload_type = 0;
 
     // main loop
     for (;;) {
@@ -310,22 +551,17 @@ public:
       do {
         // exit 
         status = static_cast<ExecutorStatus>(worker_status.load());
-
+        process_request();
         if (status == ExecutorStatus::EXIT) {
           LOG(INFO) << "Executor " << id << " exits.";
-            
-          for (auto &t : generators) {
-            t.join();
-          }
-          for (auto &t : clay) {
-            t.join();
-          }
-          for (auto &t : transmiter) {
-            t.join();
-          }
+
+            for(auto& n: dispatcher){
+              n.join();
+            }
           return;
         }
       } while (status != ExecutorStatus::START);
+
 
       while (!q.empty()) {
         auto &ptr = q.front();
@@ -342,105 +578,60 @@ public:
 
       
       // // prepare_transactions_to_run(workload, storage);
-      // LOG(INFO) << "prepare_transactions_to_run: " << std::chrono::duration_cast<std::chrono::microseconds>(
-      //                      std::chrono::steady_clock::now() - test)
-      //                      .count();
+      LOG(INFO) << "prepare_transactions_to_run: " << std::chrono::duration_cast<std::chrono::microseconds>(
+                           std::chrono::steady_clock::now() - test)
+                           .count() * 1.0 / 1000 / 1000;
       // test = std::chrono::steady_clock::now();
 
 
       VLOG_IF(DEBUG_V, id==0) << "worker " << id << " ready to process_request";
+      // thread to router the transaction generated by LionGenerator
+      for(int i = 0 ; i < MAX_COORDINATOR_NUM; i ++ ){
+        coordinator_send[i] = 0;
+      }
+      
+      router_send_txn_cnt.resize(context.coordinator_num, 0);
 
-      // thread to router the transaction generated by Generator
-      std::vector<std::thread> threads;
-      for (auto n = 0u; n < context.coordinator_num; n++) {
-        threads.emplace_back([&](int n) {
-          // 
-          std::vector<int> router_send_txn_cnt(context.coordinator_num, 0);
+      schedule_meta.start_schedule.store(1);
+      // wait for end
+      while(schedule_meta.all_done_schedule.load() < context.worker_num * context.coordinator_num && status != ExecutorStatus::EXIT){
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+        status = static_cast<ExecutorStatus>(worker_status.load());
+        process_request();
+      }
 
-          auto router_request = [&](size_t coordinator_id_dst, std::shared_ptr<simpleTransaction> txn) {
-            // router transaction to coordinators
-            messages_mutex[coordinator_id_dst]->lock();
-            size_t router_size = ControlMessageFactory::new_router_transaction_message(
-                *async_messages[coordinator_id_dst].get(), 0, *txn, 
-                context.coordinator_id);
-            flush_message(async_messages, coordinator_id_dst);
-            messages_mutex[coordinator_id_dst]->unlock();
+      auto cur_timestamp__ = std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - test)
+                  .count() * 1.0 / 1000;
+      LOG(INFO) << "send : " << cur_timestamp__;
 
-            router_send_txn_cnt[coordinator_id_dst]++;
-            n_network_size.fetch_add(router_size);
-            router_transactions_send.fetch_add(1);
-          };
-
-          // debug
-          int cnt1 = 0;
-          int cnt2 = 0;
-
-          // real transactions
-          size_t batch_size = (size_t)transactions_queue.size() < (size_t)context.batch_size ? (size_t)transactions_queue.size(): (size_t)context.batch_size;
-          for(size_t i = 0; i < batch_size / context.coordinator_num; i ++ ){
-            bool success = false;
-            std::shared_ptr<simpleTransaction> txn(transactions_queue.pop_no_wait(success));
-            DCHECK(success == true);
-            // 
-            if(txn->is_distributed)
-              my_clay->push_txn(txn);
-            // 
-            size_t coordinator_id_dst = select_best_node(txn.get()); // txn->partition_id % context.coordinator_num;
-            cnt1 ++ ;
-            router_request(coordinator_id_dst, txn);
-          }
-
-          // transfer clay move
-          size_t transmit_batch_size = (size_t)transmit_request_queue.size();
-          for(size_t i = 0; i < transmit_batch_size / context.coordinator_num; i ++ ){
-            bool success = false;
-            std::shared_ptr<simpleTransaction> txn(transmit_request_queue.pop_no_wait(success));
-            if(success == false){
-              break;
-            }
-            size_t coordinator_id_dst = txn->partition_id % context.coordinator_num;
-            if(txn->is_transmit_request){
-              VLOG(DEBUG_V14) << " TRANSMIT " << txn->keys[0] << " " << txn->keys[1] << " -> " << coordinator_id_dst;
-            }
-            cnt2 ++ ;
-            router_request(coordinator_id_dst, txn);
-          }
-          is_full_signal.store(0);
-          VLOG(DEBUG_V14) << "Generator " << n << " send router " << router_send_txn_cnt[0] << " " << router_send_txn_cnt[1];
-          // after router all txns, send the stop-SIGNAL
-          for (auto l = 0u; l < context.coordinator_num; l++){
-            if(l == context.coordinator_id){
-              continue;
-            }
-            VLOG(DEBUG_V14) << "SEND ROUTER_STOP " << n << " -> " << l;
-            messages_mutex[l]->lock();
-            ControlMessageFactory::router_stop_message(*async_messages[l].get(), router_send_txn_cnt[l]);
-            flush_message(async_messages, l);
-            messages_mutex[l]->unlock();
-          }
-        }, n);
-
-        if (context.cpu_affinity) {
-          ControlMessageFactory::pin_thread_to_core(context, threads[n], pin_thread_id_); // , generator_core_id[n]);
-          pin_thread_id_ ++;
+      // 
+      for (auto l = 0u; l < context.coordinator_num; l++){
+        if(l == context.coordinator_id){
+          continue;
         }
+        LOG(INFO) << "SEND ROUTER_STOP " << id << " -> " << l;
+        messages_mutex[l]->lock();
+        ControlMessageFactory::router_stop_message(*async_messages[l].get(), router_send_txn_cnt[l]);
+        flush_message(async_messages, l);
+        messages_mutex[l]->unlock();
       }
 
-      for (auto &t : threads) {
-        t.join();
+      for(size_t i = 0 ; i < context.coordinator_num; i ++ ){
+        LOG(INFO) << "Coord[" << i << "]: " << coordinator_send[i];
       }
+
 
       LOG(INFO) << "router_transaction_to_coordinator: " << std::chrono::duration_cast<std::chrono::microseconds>(
                            std::chrono::steady_clock::now() - test)
-                           .count();
-      test = std::chrono::steady_clock::now();
-      
-      router_fence(); // wait for coordinator to response
+                           .count() * 1.0 / 1000 / 1000 ;
+      // test = std::chrono::steady_clock::now();
+      // router_fence(); // wait for coordinator to response
 
       LOG(INFO) << "wait for coordinator to response: " << std::chrono::duration_cast<std::chrono::microseconds>(
                            std::chrono::steady_clock::now() - test)
-                           .count();
-      test = std::chrono::steady_clock::now();
+                           .count() * 1.0 / 1000 / 1000 ;
+      // test = std::chrono::steady_clock::now();
 
       // process replication request after all workers stop.
       process_request();
@@ -451,10 +642,15 @@ public:
 
       // once all workers are stop, we need to process the replication
       // requests
-
+      LOG(INFO) << "?? done_schedule ?? = " << schedule_meta.all_done_schedule.load();
       while (static_cast<ExecutorStatus>(worker_status.load()) !=
              ExecutorStatus::CLEANUP) {
         process_request();
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+      }
+
+      if(id == 0){
+        schedule_meta.clear();
       }
 
       process_request();
@@ -490,22 +686,22 @@ public:
     }
   }
 
-  std::size_t get_partition_id() {
+  // std::size_t get_partition_id() {
 
-    std::size_t partition_id;
+  //   std::size_t partition_id;
 
-    if (context.partitioner == "pb") {
-      partition_id = random.uniform_dist(0, context.partition_num - 1);
-    } else {
-      auto partition_num_per_node =
-          context.partition_num / context.coordinator_num;
-      partition_id = random.uniform_dist(0, partition_num_per_node - 1) *
-                         context.coordinator_num +
-                     coordinator_id;
-    }
-    CHECK(partitioner->has_master_partition(partition_id));
-    return partition_id;
-  }
+  //   if (context.partitioner == "pb") {
+  //     partition_id = random.uniform_dist(0, context.partition_num - 1);
+  //   } else {
+  //     auto partition_num_per_node =
+  //         context.partition_num / context.coordinator_num;
+  //     partition_id = random.uniform_dist(0, partition_num_per_node - 1) *
+  //                        context.coordinator_num +
+  //                    coordinator_id;
+  //   }
+  //   CHECK(partitioner->has_master_partition(partition_id));
+  //   return partition_id;
+  // }
 
 
   void push_message(Message *message) override { 
@@ -601,7 +797,7 @@ protected:
       if (i == coordinator_id) {
         continue;
       }
-
+      std::lock_guard<std::mutex> l(*messages_mutex[i].get()); // ]->lock();
       if (messages[i]->get_message_count() == 0) {
         continue;
       }
@@ -619,7 +815,6 @@ protected:
       if (i == (int)coordinator_id) {
         return;
       }
-
       if (messages[i]->get_message_count() == 0) {
         return;
       }
@@ -647,21 +842,29 @@ protected:
 protected:
   std::unique_ptr<Clay<WorkloadType>> my_clay;
   std::atomic<uint32_t> transmit_request_response;
-
-  ShareQueue<simpleTransaction*, 4096> transactions_queue;
-  ShareQueue<simpleTransaction*, 4096> transmit_request_queue;
-
   size_t generator_num;
-  std::atomic<uint32_t> is_full_signal;// [20];
+  
 
   std::vector<int> generator_core_id;
+  std::vector<int> dispatcher_core_id;
+
+  std::vector<std::thread> dispatcher;
+
+  std::vector<int> router_send_txn_cnt;
   std::mutex mm;
   std::atomic<uint32_t> router_transactions_send, router_transaction_done;
 
   DatabaseType &db;
-  const ContextType &context;
+  ContextType context;
   std::atomic<uint32_t> &worker_status;
   std::atomic<uint32_t> &n_complete_workers, &n_started_workers;
+  clay::ScheduleMeta &schedule_meta;
+
+  ShareQueue<simpleTransaction*, 40960> transactions_queue_self[MAX_COORDINATOR_NUM];
+  StorageType storages[MAX_COORDINATOR_NUM];
+  std::atomic<uint32_t> is_full_signal_self[MAX_COORDINATOR_NUM];
+  std::atomic<int> coordinator_send[MAX_COORDINATOR_NUM];
+
   std::unique_ptr<Partitioner> partitioner;
   RandomType random;
   ProtocolType protocol;
@@ -673,21 +876,29 @@ protected:
   std::vector<std::unique_ptr<Message>> sync_messages, async_messages;
   std::vector<std::unique_ptr<std::mutex>> messages_mutex;
 
-  std::deque<simpleTransaction> router_transactions_queue;
+  ShareQueue<simpleTransaction> router_transactions_queue;
   // std::deque<simpleTransaction> transmit_request_queue;
 
   std::deque<int> router_stop_queue;
+
+  std::vector<std::unique_ptr<TransactionType>> no_use;
 
   std::vector<
       std::function<void(MessagePiece, Message &, DatabaseType &, const ContextType &,  Partitioner *, TransactionType *)>>
       messageHandlers;
 
   std::vector<
-    std::function<void(MessagePiece, Message &, DatabaseType &, std::deque<simpleTransaction>*, std::deque<int>*)>>
+    std::function<void(MessagePiece, Message &, DatabaseType &, ShareQueue<simpleTransaction>*, std::deque<int>*)>>
     controlMessageHandlers;    
 
   std::vector<std::size_t> message_stats, message_sizes;
-  LockfreeQueue<Message *, 10086> in_queue, out_queue;
+  LockfreeQueue<Message *, 500860> in_queue, out_queue;
+
+  std::vector<std::vector<int>> txns_coord_cost;
+
+  int dispatcher_num;
+  int cur_txn_num;
+
 };
 } // namespace group_commit
 

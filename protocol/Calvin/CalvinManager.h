@@ -10,12 +10,12 @@
 #include "protocol/Calvin/CalvinExecutor.h"
 #include "protocol/Calvin/CalvinHelper.h"
 #include "protocol/Calvin/CalvinTransaction.h"
+#include "protocol/Calvin/CalvinMeta.h"
 
 #include <thread>
 #include <vector>
 
 namespace star {
-
 template <class Workload> class CalvinManager : public star::Manager {
 public:
   using base_type = star::Manager;
@@ -35,7 +35,9 @@ public:
                 const ContextType &context, std::atomic<bool> &stopFlag)
       : base_type(coordinator_id, id, context, stopFlag), db(db),
         partitioner(coordinator_id, context.coordinator_num,
-                    CalvinHelper::string_to_vint(context.replica_group)) {
+                    CalvinHelper::string_to_vint(context.replica_group)),
+        schedule_meta(context.coordinator_num, context.batch_size),
+        txn_meta(context.coordinator_num, context.batch_size)  {
 
     storages.resize(context.batch_size);
     transactions.resize(context.batch_size);// 由manager统一生成txn
@@ -55,12 +57,14 @@ public:
       n_started_workers.store(0);
       n_completed_workers.store(0);
       signal_worker(ExecutorStatus::Analysis);
+      LOG(INFO) << "Analysis start"; 
       // Allow each worker to analyse the read/write set
       // each worker analyse i, i + n, i + 2n transaction
       wait_all_workers_start();
       wait_all_workers_finish();
 
       // wait for all machines until they finish the analysis phase.
+      LOG(INFO) << "Analysis finish, wait ack";
       wait4_ack();
 
       // Allow each worker to run transactions
@@ -72,9 +76,12 @@ public:
       n_completed_workers.store(0);
       clear_lock_manager_status();
       signal_worker(ExecutorStatus::Execute);
+      LOG(INFO) << "Execute start";
       wait_all_workers_start();
+      LOG(INFO) << "Execute all work started";
       wait_all_workers_finish();
       // wait for all machines until they finish the execution phase.
+      LOG(INFO) << "Execute finish, wait ack";
       wait4_ack();
     }
 
@@ -103,13 +110,15 @@ public:
       n_started_workers.store(0);
       n_completed_workers.store(0);
       set_worker_status(ExecutorStatus::Analysis);
+      LOG(INFO) << "Analysis start"; 
       wait_all_workers_start();
       wait_all_workers_finish();
-
+      LOG(INFO) << "Analysis finish, send ack";
       send_ack();
 
       status = wait4_signal();
       DCHECK(status == ExecutorStatus::Execute);
+      LOG(INFO) << "Execute start";
       // Allow each worker to run transactions
       // DB is partitioned by the number of lock managers.
       // The first k workers act as lock managers to grant locks to other
@@ -121,6 +130,7 @@ public:
       set_worker_status(ExecutorStatus::Execute);
       wait_all_workers_start();
       wait_all_workers_finish();
+      LOG(INFO) << "Execute finish, send ack";
       send_ack();
     }
   }
@@ -141,5 +151,8 @@ public:
   std::vector<std::shared_ptr<CalvinExecutor<WorkloadType>>> workers;
   std::vector<StorageType> storages;
   std::vector<std::unique_ptr<TransactionType>> transactions;
+public:
+  calvin::ScheduleMeta schedule_meta;
+  calvin::TransactionMeta<WorkloadType> txn_meta;
 };
 } // namespace star

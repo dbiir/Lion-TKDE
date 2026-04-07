@@ -12,9 +12,6 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0")
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0")
 
-# find_library(jemalloc_lib jemalloc) # jemalloc 5.0
-# set(jemalloc_lib, "/usr/lib64/libjemalloc.so.1")
-
 # additional target to perform clang-format run, requires clang-format
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
@@ -45,6 +42,10 @@ add_library(common STATIC ${COMMON_SOURCE_FILES} ${ALL_SOURCE_FILES})
     set(GTEST_LIBRARIES "/usr/local/lib/libgtest.a")
     set(METIS_LIBRARIES "/usr/local/lib/libmetis.a")
 
+
+    target_link_libraries(common ${jemalloc_lib} ${glog} ${gflags} 
+    ${TFlowC_LIBRARIES} ${TFlowC_FRAMEWORK_LIBRARIES}
+    ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES}) 
     # target_link_libraries(common libgflags.a)
     # --[ Eigen3
     find_package(Eigen3 REQUIRED)
@@ -56,20 +57,31 @@ add_library(common STATIC ${COMMON_SOURCE_FILES} ${ALL_SOURCE_FILES})
 # add_executable(bench_tpcc bench_tpcc.cpp)
 # target_link_libraries(bench_tpcc common)
 
-add_executable(zqs_laji bench_ycsb.cpp)
-target_link_libraries(zqs_laji common 
+add_executable(bench_ycsb bench_ycsb.cpp)
+target_link_libraries(bench_ycsb common 
                     ${jemalloc_lib} ${glog} ${gflags} 
                     ${TFlowC_LIBRARIES} ${TFlowC_FRAMEWORK_LIBRARIES}
                     ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES} 
                     ${METIS_LIBRARIES}) # -static
 
 
-add_executable(zqs_laji_metis metis_test.cpp)
-target_link_libraries(zqs_laji_metis common 
-                    ${jemalloc_lib} ${glog} ${gflags} 
-                    ${TFlowC_LIBRARIES} ${TFlowC_FRAMEWORK_LIBRARIES}
-                    ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES} 
-                    ${METIS_LIBRARIES}) # -static
 
-# 
+# add_executable(bench_tpcc bench_tpcc.cpp)
+# target_link_libraries(bench_tpcc common 
+#                     ${jemalloc_lib} ${glog} ${gflags} 
+#                     ${TFlowC_LIBRARIES} ${TFlowC_FRAMEWORK_LIBRARIES}
+#                     ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES} 
+#                     ${METIS_LIBRARIES}) # -static
+
+
+
+
+# add_executable(bench_metis metis_test.cpp)
+# target_link_libraries(bench_metis common 
+#                     ${jemalloc_lib} ${glog} ${gflags} 
+#                     ${TFlowC_LIBRARIES} ${TFlowC_FRAMEWORK_LIBRARIES}
+#                     ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES} 
+#                     ${METIS_LIBRARIES}) # -static
+
+# # 
 add_subdirectory(test)

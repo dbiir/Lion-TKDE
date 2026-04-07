@@ -7,6 +7,8 @@
 #include "common/LockfreeQueue.h"
 #include "common/Message.h"
 #include "common/Socket.h"
+#include "common/cpuStat.h"
+
 // #include "common/PinThreadToCore.h"
 
 #include "core/ControlMessage.h"
@@ -25,10 +27,10 @@
 
 namespace star {
 
+using namespace get_system_usage_linux;
+
 class Coordinator {
 public:
-
-
 
   template <class Database, class Context>
   Coordinator(std::size_t id, Database &db, const Context &context)
@@ -53,11 +55,33 @@ public:
       inSockets[i].resize(peers.size());
       outSockets[i].resize(peers.size());
     }
+    
+    auto getAddressPort = [](const std::string &addressPort) {
+      std::vector<std::string> result;
+      boost::algorithm::split(result, addressPort, boost::is_any_of(":"));
+      return result;
+    };
+
+    for (auto i = 0u; i < context.peers.size(); i++) {
+      std::vector<std::string> addressPort = getAddressPort(peers[i]);
+      peers_ip.push_back(addressPort[0]);
+    }
+
   }
 
   ~Coordinator() = default;
 
   void start() {
+    std::vector<std::thread> threads;
+
+    LOG(INFO) << "Coordinator starts to run " << workers.size() << " workers.";
+
+    for (auto i = 0u; i < workers.size(); i++) {
+      threads.emplace_back(&Worker::start, workers[i].get());
+      if (context.cpu_affinity) {
+        ControlMessageFactory::pin_thread_to_core(context, threads[i]);
+      }
+    }
 
     // init dispatcher vector
     iDispatchers.resize(context.io_thread_num);
@@ -70,10 +94,10 @@ public:
     for (auto i = 0u; i < context.io_thread_num; i++) {
 
       iDispatchers[i] = std::make_unique<IncomingDispatcher>(
-          id, i, context.io_thread_num, inSockets[i], workers, in_queue,
+          id, i, context.io_thread_num, peers_ip, inSockets[i], workers, in_queue,
           ioStopFlag);
       oDispatchers[i] = std::make_unique<OutgoingDispatcher>(
-          id, i, context.io_thread_num, outSockets[i], workers, out_queue,
+          id, i, context.io_thread_num, peers_ip, outSockets[i], workers, out_queue,
           ioStopFlag);
 
       iDispatcherThreads.emplace_back(&IncomingDispatcher::start,
@@ -86,16 +110,7 @@ public:
       }
     }
 
-    std::vector<std::thread> threads;
 
-    LOG(INFO) << "Coordinator starts to run " << workers.size() << " workers.";
-
-    for (auto i = 0u; i < workers.size(); i++) {
-      threads.emplace_back(&Worker::start, workers[i].get());
-      if (context.cpu_affinity) {
-        ControlMessageFactory::pin_thread_to_core(context, threads[i]);
-      }
-    }
 
     // if(context.lion_with_metis_init){
     //   LOG(INFO) << "wait initialization done ... ";
@@ -118,22 +133,86 @@ public:
 
     std::ofstream outfile_excel;
     char output[256];
-    sprintf(output, "/home/star/data/commits_%d.xls", id);
+    sprintf(output, "/home/star/data/commits_%d.xls", (int)id);
     outfile_excel.open(output, std::ios::trunc); // ios::trunc
 
-    outfile_excel << "n_commit" << "\t" << "metis_commit" << "\t" << "n_remaster" << "\t" << "n_migrate" << "\t" 
-                  << "metis_remaster" << "\t" << "metis_migrate" << "\t" << "n_network_size" << "\t" << "abort" << "\n";
+    outfile_excel << "n_commit" << "\t" 
+                  << "metis_commit" << "\t" 
+                  << "n_remaster" << "\t" 
+                  << "n_migrate" << "\t" 
+                  << "metis_remaster | metis_migrate" << "\t" 
+                  << "cpu_usage" << "\t" 
+                  << "n_network_size" << "\t" 
+                  << "abort" << "\t" 
+                  << "r_abort" << "\n";
+
+    std::ofstream outfile_excel_breakdown;
+    char output2[256];
+    sprintf(output2, "/home/star/data/breakdown_%d.xls", (int)id);
+    outfile_excel_breakdown.open(output2, std::ios::trunc); // ios::trunc
+
+    outfile_excel_breakdown 
+                  << "time_router10%" << "\t" 
+                  << "time_scheuler10%" << "\t" 
+                  << "time_local_locks10%" << "\t" 
+                  << "time_remote_locks10%" << "\t" 
+                  << "time_execute10%" << "\t" 
+                  << "time_commit10%" << "\t" 
+                  << "time_wait4serivce10%" << "\t" 
+                  << "time_other_module10%" << "\t"
+                  // << "time_total10%" << "\t"
+                  << "time_latency10%" << "\t"
+                  << "total_latency10%" << "\t"
+                  
+                  << "time_router50%" << "\t" 
+                  << "time_scheuler50%" << "\t" 
+                  << "time_local_locks50%" << "\t" 
+                  << "time_remote_locks50%" << "\t" 
+                  << "time_execute50%" << "\t" 
+                  << "time_commit50%" << "\t" 
+                  << "time_wait4serivce50%" << "\t" 
+                  << "time_other_module50%" << "\t"
+                  // << "time_total50%" << "\t"
+                  << "time_latency50%" << "\t"
+                  << "total_latency50%" << "\t"
+
+                  << "time_router95%" << "\t" 
+                  << "time_scheuler95%" << "\t" 
+                  << "time_local_locks95%" << "\t" 
+                  << "time_remote_locks95%" << "\t" 
+                  << "time_execute95%" << "\t" 
+                  << "time_commit95%" << "\t" 
+                  << "time_wait4serivce95%" << "\t" 
+                  << "time_other_module95%" << "\t"
+                  // << "time_total95%" << "\t"
+                  << "time_latency95%" 
+                  << "total_latency50%" << "\t"
+                  << "\n";
 
     do {
       LOG(INFO) << "SLEEP : " << std::to_string(context.sample_time_interval);
+
+
+      CPU_stats t1 = read_cpu_data();
+
       std::this_thread::sleep_for(std::chrono::milliseconds(context.sample_time_interval * 1000));
+
+      CPU_stats t2 = read_cpu_data();
+      
+
+      auto cpu_usage = get_cpu_usage(t1, t2);
+
 
       uint64_t n_commit = 0, metis_commit = 0, 
                n_remaster = 0, n_migrate = 0, // 
                metis_remaster = 0, metis_migrate = 0, // 
                n_abort_no_retry = 0, n_abort_lock = 0,
                n_abort_read_validation = 0, n_local = 0,
-               n_si_in_serializable = 0, n_network_size = 0;
+               n_remaster_abort = 0,
+               n_si_in_serializable = 0, n_network_size = 0, 
+               metis_n_network_size = 0;
+      
+      uint64_t n_singled = 0, n_distributed = 0;
 
       // switch type in every 10 second;
       int cur_workload_type = std::chrono::duration_cast<std::chrono::seconds>(
@@ -141,7 +220,47 @@ public:
                  .count() / context.workload_time % 6;
 
       for (auto i = 0u; i < workers.size(); i++) {
-        if(context.lion_with_metis_init == 1 && i == context.worker_num){
+        // if(i == 1){
+        //   outfile_excel_breakdown  
+        //                 << workers[i]->txn_statics.nth(10).time_router << "\t" 
+        //                 << workers[i]->txn_statics.nth(10).time_scheuler << "\t" 
+        //                 << workers[i]->txn_statics.nth(10).time_local_locks << "\t" 
+        //                 << workers[i]->txn_statics.nth(10).time_remote_locks << "\t" 
+        //                 << workers[i]->txn_statics.nth(10).time_execute << "\t" 
+        //                 << workers[i]->txn_statics.nth(10).time_commit << "\t" 
+        //                 << workers[i]->txn_statics.nth(10).time_wait4serivce << "\t" 
+        //                 << workers[i]->txn_statics.nth(10).time_other_module << "\t" 
+        //                 << workers[i]->txn_statics.nth(10).time_latency << "\t" 
+        //                 << workers[i]->total_latency.nth(10) << "\t" 
+
+        //                 << workers[i]->txn_statics.nth(50).time_router << "\t" 
+        //                 << workers[i]->txn_statics.nth(50).time_scheuler << "\t" 
+        //                 << workers[i]->txn_statics.nth(50).time_local_locks << "\t" 
+        //                 << workers[i]->txn_statics.nth(50).time_remote_locks << "\t" 
+        //                 << workers[i]->txn_statics.nth(50).time_execute << "\t" 
+        //                 << workers[i]->txn_statics.nth(50).time_commit << "\t" 
+        //                 << workers[i]->txn_statics.nth(50).time_wait4serivce << "\t" 
+        //                 << workers[i]->txn_statics.nth(50).time_other_module << "\t" 
+        //                 << workers[i]->txn_statics.nth(50).time_latency << "\t" 
+        //                 << workers[i]->total_latency.nth(50) << "\t" 
+
+        //                 << workers[i]->txn_statics.nth(95).time_router << "\t" 
+        //                 << workers[i]->txn_statics.nth(95).time_scheuler << "\t" 
+        //                 << workers[i]->txn_statics.nth(95).time_local_locks << "\t" 
+        //                 << workers[i]->txn_statics.nth(95).time_remote_locks << "\t" 
+        //                 << workers[i]->txn_statics.nth(95).time_execute << "\t" 
+        //                 << workers[i]->txn_statics.nth(95).time_commit << "\t" 
+        //                 << workers[i]->txn_statics.nth(95).time_wait4serivce << "\t" 
+        //                 << workers[i]->txn_statics.nth(95).time_other_module << "\t"
+        //                 << workers[i]->txn_statics.nth(95).time_latency << "\t"
+        //                 << workers[i]->total_latency.nth(95) << "\n" ;
+        //                 ;
+        // }
+        
+        if((context.protocol.find("Lion") != context.protocol.npos || 
+            context.protocol.find("LION") != context.protocol.npos ||
+            context.protocol.find("CLAY-S") != context.protocol.npos ||
+            context.protocol == "MyClay") && i == context.worker_num){
           metis_commit += workers[i]->n_commit.load();
           workers[i]->n_commit.store(0);
 
@@ -150,6 +269,12 @@ public:
 
           metis_migrate += workers[i]->n_migrate.load();
           workers[i]->n_migrate.store(0);
+
+          metis_n_network_size += workers[i]->n_network_size.load();
+          workers[i]->n_network_size.store(0);
+
+          n_remaster_abort += workers[i]->n_remaster_abort.load();
+          workers[i]->n_remaster_abort.store(0);
           continue;
         }
         n_commit += workers[i]->n_commit.load();
@@ -170,6 +295,9 @@ public:
         n_abort_read_validation += workers[i]->n_abort_read_validation.load();
         workers[i]->n_abort_read_validation.store(0);
 
+        n_remaster_abort += workers[i]->n_remaster_abort.load();
+        workers[i]->n_remaster_abort.store(0);
+
         n_local += workers[i]->n_local.load();
         workers[i]->n_local.store(0);
 
@@ -180,10 +308,44 @@ public:
         workers[i]->n_network_size.store(0);
 
         workers[i]->workload_type = cur_workload_type;
+
+        n_singled += workers[i]->singled_num.load();
+        workers[i]->singled_num.store(0);
+
+        n_distributed += workers[i]->distributed_num.load();
+        workers[i]->distributed_num.store(0);
+
+        workers[i]->clear_status.store(true);
+        workers[i]->total_latency.clear();
+
+        // workers[i]->time_router.clear();
+        // workers[i]->time_scheuler.clear();
+        // workers[i]->time_local_locks.clear();
+        // workers[i]->time_remote_locks.clear();
+        // workers[i]->time_execute.clear();
+        // workers[i]->time_commit.clear();
+        // workers[i]->time_wait4serivce.clear();
+        // workers[i]->time_other_module.clear();
+
       }
 
-      outfile_excel << n_commit << "\t" << metis_commit << "\t" << n_remaster << "\t" << n_migrate << "\t" 
-                  << metis_remaster << "\t" << metis_migrate << "\t" << 1.0 * n_network_size / n_commit << "\t" << abort << "\n";
+      outfile_excel 
+                  << n_commit << "\t" 
+                  << metis_commit << "\t" 
+                  << n_remaster << "\t" 
+                  << n_migrate << "\t" 
+                  << metis_remaster << " | " << metis_migrate << "\t" 
+                  << cpu_usage << "\t" 
+                  << n_network_size << "\t"
+                  << metis_n_network_size << "\t"
+                  << n_abort_no_retry + n_abort_lock + n_abort_read_validation << "\t" 
+                  << n_remaster_abort << "\t"
+                  << 1.0 * n_network_size / n_commit << "\t"
+                  << 1.0 * n_distributed / (n_distributed + n_singled) << "\t"
+                  << n_distributed << "\t"
+                  << n_singled << "\n";
+                  // n_singled << " | " << n_distributed << " = " << 1.0 * n_distributed / (n_distributed + n_singled) << "\n";
+
 
       LOG(INFO) << "workload: " << cur_workload_type << " commit: " << n_commit 
                 << " metis_commit: " << metis_commit
@@ -196,9 +358,12 @@ public:
                 << n_abort_read_validation
                 << "), network size: " << n_network_size
                 << ", avg network size: " << 1.0 * n_network_size / n_commit
+                << ", metis_n_network_size : " << metis_n_network_size 
+                << ", avg metis_n_network_size : " << 1.0 * metis_n_network_size / metis_commit
                 << ", si_in_serializable: " << n_si_in_serializable << " "
                 << 100.0 * n_si_in_serializable / n_commit << " %"
-                << ", local: " << 100.0 * n_local / n_commit << " %";
+                << ", local: " << 100.0 * n_local / n_commit << " %\n"
+                << "n_singled: " << n_singled << " , n_distributed: " << n_distributed << " " <<  1.0 * n_distributed / (n_distributed + n_singled)  << " % ";
       count++;
       if (count > warmup && count <= timeToRun - cooldown) {
         total_commit += n_commit;
@@ -426,6 +591,8 @@ private:
 
   std::size_t id, coordinator_num;
   const std::vector<std::string> &peers; // ip and port ?
+  std::vector<std::string> peers_ip; // ip and port ?
+
   const Context &context;
   std::vector<std::vector<Socket>> inSockets, outSockets;
   std::atomic<bool> workerStopFlag, ioStopFlag;

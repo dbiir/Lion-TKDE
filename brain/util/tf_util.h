@@ -1,14 +1,3 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// tf_util.h
-//
-// Identification: src/include/brain/util/tf_util.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
 
 #pragma once
 
@@ -18,11 +7,11 @@
  * Simple utility functions associated with Tensorflow
  */
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 class TFUtil {
  public:
   static const char *GetTFVersion() { return TF_Version(); }
 };
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain

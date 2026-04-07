@@ -78,53 +78,135 @@ int main(int argc, char *argv[]) {
   std::atomic<uint32_t> worker_status;
   std::unique_ptr<star::Clay<WorkloadType>> my_clay = std::make_unique<star::Clay<WorkloadType>>(context, db, worker_status);
   
-  LOG(INFO) << "start";
-  // my_clay->init_with_history("/home/star/data/resultss.xls", 0, 30 - 1);
-  // my_clay->init_with_history("/home/star/data/resultss.xls", 0, 30 - 1);
-  
-  LOG(INFO) << "history init done";
-  // my_clay->metis_partition_graph("/home/star/data/resultss_partition_0_30.xls");
+  // LOG(INFO) << "start";
+  // // my_clay->init_with_history("/home/star/data/resultss.xls", 0, 30 - 1);
+  // my_clay->init_with_history(context.data_src_path_dir + "resultss.xls", 0, 30 - 1);
+  // LOG(INFO) << "history init done";
+  // // my_clay->metis_partition_graph("/home/star/data/resultss_partition_0_30.xls");
+  // my_clay->my_find_clump(context.data_src_path_dir + "resultss_partition_0_30.xls");
   // LOG(INFO) << "done";
-
-
   // my_clay->clear_graph();
 
+
+
+////
   // LOG(INFO) << "start";
-  LOG(INFO) << "history init done";
-  my_clay->init_with_history("/home/star/data/resultss.xls", 30, 60 - 1);
-  // my_clay->metis_partition_graph("/home/star/data/resultss_partition_30_60.xls");
-  my_clay->my_find_clump("/home/star/data/resultss_partition_30_60_.xls");
-  LOG(INFO) << "done";
-
-
-  my_clay->clear_graph();
-
-
-  LOG(INFO) << "history init done";
-  my_clay->init_with_history("/home/star/data/resultss.xls", 0, 60 - 1);
-  // my_clay->metis_partition_graph("/home/star/data/resultss_partition_30_60.xls");
-  my_clay->my_find_clump("/home/star/data/resultss_partition_0_60_.xls");
-  LOG(INFO) << "done";
-
-
-  my_clay->clear_graph();
-
-  // LOG(INFO) << "start";
-  // my_clay->init_with_history("/home/star/data/resultss.xls", 60, 90 - 1);
   // LOG(INFO) << "history init done";
-  // my_clay->metis_partition_graph("/home/star/data/resultss_partition_60_90.xls");
+  // my_clay->init_with_history(context.data_src_path_dir + "resultss.xls", 0, 30);
+  // // my_clay->metis_partition_graph("/home/star/data/resultss_partition_30_60.xls");
+  // // my_clay->my_find_clump(context.data_src_path_dir + "test_resultss_partition_30_60.xls");
+  // my_clay->find_clump();
+  // my_clay->implement_clump();
+
+  // LOG(INFO) << "first round done";
+  // my_clay->clear_graph();
+  // my_clay->init_with_history(context.data_src_path_dir + "resultss.xls", 0, 30);
+  // // my_clay->metis_partition_graph("/home/star/data/resultss_partition_30_60.xls");
+  // // my_clay->my_find_clump(context.data_src_path_dir + "test_resultss_partition_30_60.xls");
+  // my_clay->find_clump();
+  // my_clay->implement_clump();
+
+  // my_clay->save_clay_moves(context.data_src_path_dir + "clay_resultss_partition_0_30.xls");
+////
+
+  std::string src_file = "resultss.xls";
+  std::string dst_file = "resultss_partition_30_60.xls"; 
+
+  if(context.protocol == "MyClay"){
+    LOG(INFO) << "MyClay";
+    dst_file = "clay_resultss_partition_0_30.xls"; 
+  }
+
+
+  if(context.protocol.find("Lion") != context.protocol.npos || 
+     context.protocol.find("LION") != context.protocol.npos ){
+    dst_file = "resultss_partition_0_30.xls"; 
+    int time_start = 0;
+    int time_end   = time_start + context.workload_time;
+    my_clay->my_run_offline(src_file, dst_file, time_start, time_end);
+
+    time_start += context.workload_time; 
+    time_end += context.workload_time;
+
+    dst_file = "resultss_partition_30_60.xls"; 
+    my_clay->my_run_offline(src_file, dst_file, time_start + 10, time_end);
+
+    time_start += context.workload_time; 
+    time_end += context.workload_time;
+
+    dst_file = "resultss_partition_60_90.xls"; 
+    my_clay->my_run_offline(src_file, dst_file, time_start + 10, time_end);
+
+    time_start += context.workload_time; 
+    time_end += context.workload_time;
+    
+    dst_file = "resultss_partition_90_120.xls"; 
+    my_clay->my_run_offline(src_file, dst_file, time_start + 10, time_end);
+  } else {
+    std::string src_file = "resultss.xls";
+    std::string dst_file = "clay_resultss_partition_0_30.xls"; 
+    int time_start = 0;
+    int time_end   = time_start + context.workload_time;
+
+    my_clay->run_clay_offline(src_file, dst_file, time_start, time_end);
+
+    time_start += context.workload_time; 
+    time_end += context.workload_time;
+
+    dst_file = "clay_resultss_partition_30_60.xls"; 
+    my_clay->run_clay_offline(src_file, dst_file, time_start + 10, time_end);
+
+    time_start += context.workload_time; 
+    time_end += context.workload_time;
+
+    dst_file = "clay_resultss_partition_60_90.xls"; 
+    my_clay->run_clay_offline(src_file, dst_file, time_start + 10, time_end);
+
+    time_start += context.workload_time; 
+    time_end += context.workload_time;
+
+    dst_file = "clay_resultss_partition_90_120.xls"; 
+    my_clay->run_clay_offline(src_file, dst_file, time_start + 10, time_end);
+  }
+  // dst_file = "clay_resultss_partition_90_120.xls"; 
+
+
+
+
+
+
+  // // LOG(INFO) << "start";
+  // LOG(INFO) << "history init done";
+  // my_clay->init_with_history(context.data_src_path_dir + "resultss.xls", 30, 60 - 1);
+  // // my_clay->metis_partition_graph("/home/star/data/resultss_partition_30_60.xls");
+  // my_clay->my_find_clump(context.data_src_path_dir + "resultss_partition_30_60.xls");
   // LOG(INFO) << "done";
+  // my_clay->clear_graph();
 
 
-  //   my_clay->clear_graph();
+  // // LOG(INFO) << "history init done";
+  // // my_clay->init_with_history("/home/star/data/resultss.xls", 0, 60 - 1);
+  // // // my_clay->metis_partition_graph("/home/star/data/resultss_partition_30_60.xls");
+  // // my_clay->my_find_clump("/home/star/data/resultss_partition_0_60_.xls");
+  // // LOG(INFO) << "done";
+  // // my_clay->clear_graph();
+
 
   // LOG(INFO) << "start";
-  // my_clay->init_with_history("/home/star/data/resultss.xls", 90, 120 - 1);
+  // my_clay->init_with_history(context.data_src_path_dir + "resultss.xls", 60, 90 - 1);
   // LOG(INFO) << "history init done";
-  // my_clay->metis_partition_graph("/home/star/data/resultss_partition_90_120.xls");
+  // // my_clay->metis_partition_graph("/home/star/data/resultss_partition_60_90.xls");
+  // my_clay->my_find_clump(context.data_src_path_dir + "resultss_partition_60_90.xls");
   // LOG(INFO) << "done";
+  // my_clay->clear_graph();
 
 
+  // LOG(INFO) << "start";
+  // my_clay->init_with_history(context.data_src_path_dir + "resultss.xls", 90, 120 - 1);
+  // LOG(INFO) << "history init done";
+  // // my_clay->metis_partition_graph("/home/star/data/resultss_partition_90_120.xls");
+  // my_clay->my_find_clump(context.data_src_path_dir + "resultss_partition_90_120.xls");
+  // LOG(INFO) << "done";
   // my_clay->clear_graph();
 
   // LOG(INFO) << "start";
@@ -134,15 +216,15 @@ int main(int argc, char *argv[]) {
   // LOG(INFO) << "done";
 
   // LOG(INFO) << "start read from file";
-  // my_clay->metis_partiion_read_from_file("/home/star/data/resultss_partition_20_40.xls");
+  // my_clay->lion_partiion_read_from_file("/home/star/data/resultss_partition_20_40.xls");
   // LOG(INFO) << "read from file done";
 
   // LOG(INFO) << "start read from file";
-  // my_clay->metis_partiion_read_from_file("/home/star/data/resultss_partition_40_60.xls");
+  // my_clay->lion_partiion_read_from_file("/home/star/data/resultss_partition_40_60.xls");
   // LOG(INFO) << "read from file done";
 
   // LOG(INFO) << "start read from file";
-  // my_clay->metis_partiion_read_from_file("/home/star/data/resultss_partition_0_20.xls");
+  // my_clay->lion_partiion_read_from_file("/home/star/data/resultss_partition_0_20.xls");
   // LOG(INFO) << "read from file done";
 
   // test done 

@@ -1,30 +1,8 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// tf_session_entity_output.cpp
-//
-// Identification: src/brain/util/tf_session_entity/tf_session_entity_output.cpp
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "brain/util/tf_session_entity/tf_session_entity_output.h"
 
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// tf_session_entity_output.h
-//
-// Identification:
-// src/include/brain/util/tf_session_entity/tf_session_entity_output.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
 
 
 #include "tf_session_entity_io.h"
@@ -32,7 +10,7 @@
 #define TFSEOUT_TEMPLATE_ARGUMENTS template <typename OutputType>
 #define TFSEOUT_TYPE TfSessionEntityOutput<OutputType>
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 
 /**
@@ -89,4 +67,4 @@ TFSEOUT_TYPE::TfSessionEntityOutput(const std::vector<int64_t> &dims,
 // Explicit template Initialization
 template class TfSessionEntityOutput<float>;
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain

@@ -61,18 +61,24 @@ public:
   ~Executor() = default;
 
 
-  void unpack_route_transaction(WorkloadType& workload, StorageType& storage, 
-                                std::deque<simpleTransaction>& router_transactions_queue_,
-                                std::deque<std::unique_ptr<TransactionType>>& r_transactions_queue_){
+  void unpack_route_transaction(WorkloadType& workload, StorageType& storage){
 
-    while(!router_transactions_queue_.empty()){
-      simpleTransaction simple_txn = router_transactions_queue_.front();
-      router_transactions_queue_.pop_front();
+    // int size_ = router_transactions_queue.size();
+    while(true){
+      // size_ -- ;
+      // bool is_ok = false;
+      bool success = false;
+      simpleTransaction simple_txn = 
+        router_transactions_queue.pop_no_wait(success);
+      if(!success) break;
+      //  = router_transactions_queue.front();
+      // router_transactions_queue.pop_front();
+      // DCHECK(is_ok == true);
       
       n_network_size.fetch_add(simple_txn.size);
 
       auto p = workload.unpack_transaction(context, 0, storage, simple_txn);
-      r_transactions_queue_.push_back(std::move(p));
+      r_transactions_queue.push_back(std::move(p));
     }
   }
 
@@ -167,7 +173,7 @@ public:
     do {
       process_request();
 
-      unpack_route_transaction(workload, storage, router_transactions_queue, r_transactions_queue); // 
+      unpack_route_transaction(workload, storage); // 
       if(r_transactions_queue.size() > 0){
         size_t r_size = r_transactions_queue.size();
         run_transaction(context, partitioner.get(), r_transactions_queue); // 
@@ -190,6 +196,7 @@ public:
     while (static_cast<ExecutorStatus>(worker_status.load()) !=
            ExecutorStatus::CLEANUP) {
       process_request();
+      std::this_thread::sleep_for(std::chrono::microseconds(5));
     }
 
     process_request();
@@ -330,7 +337,7 @@ protected:
 
 protected:
   DatabaseType &db;
-  const ContextType &context;
+  ContextType context;
   std::atomic<uint32_t> &worker_status;
   std::atomic<uint32_t> &n_complete_workers, &n_started_workers;
   std::unique_ptr<Partitioner> partitioner;
@@ -338,7 +345,9 @@ protected:
   ProtocolType protocol;
   WorkloadType workload;
   std::unique_ptr<Delay> delay;
+  
   Percentile<int64_t> percentile, dist_latency, local_latency;
+
   std::unique_ptr<TransactionType> transaction;
   std::vector<std::unique_ptr<Message>> messages;
   std::vector<
@@ -346,14 +355,25 @@ protected:
       messageHandlers;
 
   std::vector<
-      std::function<void(MessagePiece, Message &, DatabaseType &, std::deque<simpleTransaction>*, std::deque<int>* )>>
+      std::function<void(MessagePiece, Message &, DatabaseType &, ShareQueue<simpleTransaction>*, std::deque<int>* )>>
       controlMessageHandlers;
 
-  std::deque<simpleTransaction> router_transactions_queue;           // router
+  ShareQueue<simpleTransaction> router_transactions_queue;           // router
   std::deque<int> router_stop_queue;
   std::deque<std::unique_ptr<TransactionType>> r_transactions_queue; // to transaction
 
   std::vector<std::size_t> message_stats, message_sizes;
   LockfreeQueue<Message *> in_queue, out_queue;
+
+  // Percentile<int64_t> time_router;
+  // Percentile<int64_t> time_scheuler;
+  // Percentile<int64_t> time_local_locks;
+  // Percentile<int64_t> time_remote_locks;
+  // Percentile<int64_t> time_execute;
+  // Percentile<int64_t> time_commit;
+  // Percentile<int64_t> time_wait4serivce;
+  // Percentile<int64_t> time_other_module;
+
+  // Percentile<int64_t> time_total;
 };
 } // namespace star

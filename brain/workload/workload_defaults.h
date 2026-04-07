@@ -1,28 +1,7 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// workload_defaults.cpp
-//
-// Identification: src/brain/workload/workload_defaults.cpp
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "brain/workload/workload_defaults.h"
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// workload_defaults.h
-//
-// Identification: src/include/brain/workload/workload_defaults.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
 
 
 /**
@@ -30,7 +9,7 @@
  * associated with the workload prediction task
  **/
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 
 /**
@@ -101,4 +80,4 @@ const int LinearRegWorkloadDefaults::BPTT = 90;
 const int KernelRegWorkloadDefaults::BPTT = 90;
 
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain

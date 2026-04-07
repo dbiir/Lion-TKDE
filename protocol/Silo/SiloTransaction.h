@@ -60,15 +60,17 @@ public:
   virtual TransactionResult prepare_update_execute(std::size_t worker_id) = 0;
 
   virtual TransactionResult execute(std::size_t worker_id) = 0;
-
-  // virtual TransactionResult local_execute(std::size_t worker_id) = 0;
+  virtual std::vector<size_t> debug_record_keys() = 0;
+  virtual std::vector<size_t> debug_record_keys_master() = 0;
+  virtual TransactionResult transmit_execute(std::size_t worker_id) = 0;
 
 
 
   virtual void reset_query() = 0;
-
+  virtual std::string print_raw_query_str() =0;
   virtual const std::vector<u_int64_t> get_query() = 0;
   virtual const std::string get_query_printed() = 0;
+  virtual const std::vector<u_int64_t> get_query_master() = 0;
   virtual const std::vector<bool> get_query_update() = 0;
 
     virtual std::set<int> txn_nodes_involved(bool is_dynamic) = 0;
@@ -179,11 +181,18 @@ public:
       readSet[i].clear_read_request_bit();
       readSet[i].set_tid(tid);
     }
-
+    // LOG(INFO) << "pendingResponses: " << pendingResponses;
     if (pendingResponses > 0) {
       message_flusher();
       while (pendingResponses > 0) {
         remote_request_handler();
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+        status = get_worker_status();
+        if(status == ExecutorStatus::EXIT){
+          LOG(INFO) << "TRANSMITER SHOULD BE STOPPED";
+          success = false;
+          break;
+        }
       }
     }
     if(is_abort()){
@@ -195,7 +204,10 @@ public:
       return true;
     }
   }
-
+  bool process_remaster_requests(std::size_t worker_id) {
+    DCHECK(false);
+    return true;
+  }
 
   bool process_read_only_requests(std::size_t worker_id) {
     /**
@@ -223,13 +235,15 @@ public:
       message_flusher();
       while (pendingResponses > 0) {
         remote_request_handler();
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+
       }
     }
     return false;
   }
 
 
-  bool process_local_requests(std::size_t worker_id) {
+  bool process_migrate_requests(std::size_t worker_id) {
     /**
      * @brief 
      * 
@@ -339,7 +353,8 @@ public:
   Partitioner &partitioner;
   Operation operation;
   std::vector<SiloRWKey> readSet, writeSet; //, routerSet;
-
+  Breakdown b;
+  ExecutorStatus status;
   int prepare, fetch, commit;
 };
 

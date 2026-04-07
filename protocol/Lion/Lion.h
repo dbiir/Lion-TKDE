@@ -17,6 +17,7 @@
 #include "protocol/Lion/LionTransaction.h"
 #include "protocol/Lion/LionManager.h"
 #include "protocol/Lion/LionMessage.h"
+#include "protocol/Lion/LionMetisMessage.h"
 #include <glog/logging.h>
 
 namespace star {
@@ -139,7 +140,7 @@ public:
 
     // unlock_all_read_locks(txn);
     
-    // sync_messages(txn, false);
+    sync_messages(txn, false);
   }
 
 
@@ -169,8 +170,9 @@ public:
       auto coordinatorID = readKey.get_dynamic_coordinator_id(); // partitioner.master_coordinator(tableId, partitionId, key);
       // write
       auto key = readKey.get_key();
-
-      DCHECK(txn.tids[i] != nullptr && readKey.get_read_respond_bit());
+      if(txn.tids[i] == nullptr) // || !readKey.get_read_respond_bit()
+        continue;
+      // DCHECK(txn.tids[i] != nullptr && readKey.get_read_respond_bit()) << txn.tids[i] << " " << readKey.get_read_respond_bit();
       if (coordinatorID == context.coordinator_id) {
         if(readKey.get_write_lock_bit()){
           VLOG(DEBUG_V14) << "  unLOCK-write " << *(int*)key << " " << *txn.tids[i] << " " << commit_tid << " " << is_metis;
@@ -237,7 +239,7 @@ private:
                            std::atomic<uint32_t> &async_message_num) {
 
     auto &readSet = txn.readSet;
-
+    size_t replica_num = partitioner.replica_num();
     for (auto i = 0u; i < readSet.size(); i++) {
       auto &readKey = readSet[i];
       if(!readKey.get_write_lock_bit()){
@@ -287,25 +289,42 @@ private:
           auto coordinatorID = k;
           txn.network_size += MessageFactoryType::new_replication_message(
               *messages[coordinatorID], *table, readKey.get_key(),
-              readKey.get_value(), commit_tid);
+              readKey.get_value(), commit_tid, txn.id);
           
           DCHECK(strlen((char*)readKey.get_value()) > 0);
-          // async_message_num.fetch_add(1);
+          async_message_num.fetch_add(1);
           VLOG(DEBUG_V11) << " async_message_num: " << context.coordinator_id << " -> " << k << " " << async_message_num.load() << " " << *(int*)readKey.get_key() << " " << (char*)readKey.get_value();
           send_replica = true;
+          replicate_count += 1;
+            // if(replicate_count >= replica_num){
+            //   break;
+            // }
         }
       }
 
+      // if(replicate_count >= 2){
+        
+      //   // LOG(INFO) << "replicate_count : " << replicate_count;
+      // }
+
       if(send_replica == false && context.coordinator_num > 1){
-        DCHECK(false);
+        // DCHECK(false);
       }
       // DCHECK(replicate_count == partitioner.replica_num() - 1);
     }
 
-    // sync_messages(txn, false);
+    sync_messages(txn, false);
   }
 
-
+  void sync_messages(TransactionType &txn, bool wait_response = true) {
+    txn.message_flusher();
+    if (wait_response) {
+      while (txn.pendingResponses > 0) {
+        txn.remote_request_handler();
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+      }
+    }
+  }
 
 private:
   DatabaseType &db;

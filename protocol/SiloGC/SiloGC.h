@@ -56,12 +56,13 @@ public:
       auto tableId = writeKey.get_table_id();
       auto partitionId = writeKey.get_partition_id();
       auto table = db.find_table(tableId, partitionId);
-      if (partitioner.has_master_partition(partitionId)) {
-        auto key = writeKey.get_key();
+      auto key = writeKey.get_key();
+      if (partitioner.has_master_partition(tableId, partitionId, key)) {
+        
         std::atomic<uint64_t> &tid = table->search_metadata(key);
         SiloHelper::unlock(tid);
       } else {
-        auto coordinatorID = partitioner.master_coordinator(partitionId);
+        auto coordinatorID = partitioner.master_coordinator(tableId, partitionId, key);
         txn.network_size += MessageFactoryType::new_abort_message(
             *syncMessages[coordinatorID], *table, writeKey.get_key());
       }
@@ -73,7 +74,8 @@ public:
   bool commit(TransactionType &txn,
               std::vector<std::unique_ptr<Message>> &syncMessages,
               std::vector<std::unique_ptr<Message>> &asyncMessages) {
-
+    
+    VLOG(DEBUG_V16) << "commit: " << *(int*)txn.readSet[0].get_key() << " " << *(int*)txn.readSet[1].get_key();
     // lock write set
     if (lock_write_set(txn, syncMessages)) {
       abort(txn, syncMessages, asyncMessages);
@@ -107,10 +109,10 @@ private:
       auto tableId = writeKey.get_table_id();
       auto partitionId = writeKey.get_partition_id();
       auto table = db.find_table(tableId, partitionId);
-
+      auto key = writeKey.get_key();
       // lock local records
-      if (partitioner.has_master_partition(partitionId)) {
-        auto key = writeKey.get_key();
+      if (partitioner.has_master_partition(tableId, partitionId, key)) {
+        
         std::atomic<uint64_t> &tid = table->search_metadata(key);
         bool success;
         uint64_t latestTid = SiloHelper::lock(tid, success);
@@ -119,6 +121,7 @@ private:
           txn.abort_lock = true;
           break;
         }
+        VLOG(DEBUG_V16) << "w-lock " << *(int*) key;
 
         writeKey.set_write_lock_bit();
 
@@ -134,7 +137,7 @@ private:
         writeKey.set_tid(latestTid);
       } else {
         txn.pendingResponses++;
-        auto coordinatorID = partitioner.master_coordinator(partitionId);
+        auto coordinatorID = partitioner.master_coordinator(tableId, partitionId, key);
         txn.network_size += MessageFactoryType::new_lock_message(
             *messages[coordinatorID], *table, writeKey.get_key(), i);
       }
@@ -175,9 +178,9 @@ private:
       auto tableId = readKey.get_table_id();
       auto partitionId = readKey.get_partition_id();
       auto table = db.find_table(tableId, partitionId);
-
-      if (partitioner.has_master_partition(partitionId)) {
-        auto key = readKey.get_key();
+      auto key = readKey.get_key();
+      if (partitioner.has_master_partition(tableId, partitionId, key)) {
+        
         uint64_t tid = table->search_metadata(key).load();
         if (SiloHelper::remove_lock_bit(tid) != readKey.get_tid()) {
           txn.abort_read_validation = true;
@@ -189,7 +192,7 @@ private:
         }
       } else {
         txn.pendingResponses++;
-        auto coordinatorID = partitioner.master_coordinator(partitionId);
+        auto coordinatorID = partitioner.master_coordinator(tableId, partitionId, key);
         txn.network_size += MessageFactoryType::new_read_validation_message(
             *messages[coordinatorID], *table, readKey.get_key(), i,
             readKey.get_tid());
@@ -257,16 +260,17 @@ private:
       auto tableId = writeKey.get_table_id();
       auto partitionId = writeKey.get_partition_id();
       auto table = db.find_table(tableId, partitionId);
-
+      auto key = writeKey.get_key();
       // write
-      if (partitioner.has_master_partition(partitionId)) {
-        auto key = writeKey.get_key();
+      if (partitioner.has_master_partition(tableId, partitionId, key)) {
+        
         auto value = writeKey.get_value();
         std::atomic<uint64_t> &tid = table->search_metadata(key);
         table->update(key, value);
         SiloHelper::unlock(tid, commit_tid);
+        VLOG(DEBUG_V16) << "w-unlock " << *(int*) key;
       } else {
-        auto coordinatorID = partitioner.master_coordinator(partitionId);
+        auto coordinatorID = partitioner.master_coordinator(tableId, partitionId, key);
         txn.network_size += MessageFactoryType::new_write_message(
             *syncMessages[coordinatorID], *table, writeKey.get_key(),
             writeKey.get_value(), commit_tid);
@@ -279,12 +283,12 @@ private:
       for (auto k = 0u; k < partitioner.total_coordinators(); k++) {
 
         // k does not have this partition
-        if (!partitioner.is_partition_replicated_on(partitionId, k)) {
+        if (!partitioner.is_partition_replicated_on(tableId, partitionId, key, k)) {
           continue;
         }
 
         // already write
-        if (k == partitioner.master_coordinator(partitionId)) {
+        if (k == partitioner.master_coordinator(tableId, partitionId, key)) {
           continue;
         }
 
@@ -310,13 +314,16 @@ private:
           txn.network_size += MessageFactoryType::new_replication_message(
               *asyncMessages[coordinatorID], *table, writeKey.get_key(),
               writeKey.get_value(), commit_tid);
+          // if(context.replica_sync){
+          //   txn.pendingResponses++;
+          // }
         }
       }
 
       // DCHECK(replicate_count == partitioner.replica_num() - 1);
     }
 
-    sync_messages(txn, false);
+    sync_messages(txn, context.replica_sync);
   }
 
   void sync_messages(TransactionType &txn, bool wait_response = true) {
@@ -324,6 +331,7 @@ private:
     if (wait_response) {
       while (txn.pendingResponses > 0) {
         txn.remote_request_handler();
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
       }
     }
   }

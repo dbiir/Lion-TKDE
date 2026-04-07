@@ -47,7 +47,8 @@ public:
         }
 
 
-  ReadModifyWrite(std::size_t coordinator_id, std::size_t partition_id, std::atomic<uint32_t> &worker_status,
+  ReadModifyWrite(std::size_t coordinator_id, std::size_t partition_id, 
+                  std::atomic<uint32_t> &worker_status,
                   DatabaseType &db, const ContextType &context,
                   RandomType &random, Partitioner &partitioner,
                   Storage &storage, simpleTransaction& simple_txn)
@@ -60,7 +61,28 @@ public:
            * @brief convert from the generated txns
            * 
            */
-          is_transmit_request = simple_txn.is_transmit_request;    
+          is_transmit_request = simple_txn.is_transmit_request;
+          on_replica_id = simple_txn.on_replica_id;
+        }
+
+
+  ReadModifyWrite(std::size_t coordinator_id, std::size_t partition_id, 
+                  std::atomic<uint32_t> &worker_status,
+                  DatabaseType &db, const ContextType &context,
+                  RandomType &random, Partitioner &partitioner,
+                  Storage &storage, 
+                  Transaction& txn)
+      : Transaction(coordinator_id, partition_id, partitioner), 
+        worker_status_(worker_status), db(db),
+        context(context), random(random), storage(storage),
+        partition_id(partition_id),
+        query(makeYCSBQuery()(txn.get_query(), txn.get_query_update())) {
+          /**
+           * @brief convert from the generated txns
+           * 
+           */
+          this->on_replica_id = txn.on_replica_id;
+          // LOG(INFO) << "reset ! " << txn.on_replica_id;
         }
 
   virtual ~ReadModifyWrite() override = default;
@@ -96,7 +118,6 @@ public:
     if (this->process_requests(worker_id)) {
       return TransactionResult::ABORT;
     } 
-    
     if(is_transmit_request == true){
       // std::string str = "";
       // for(size_t i = 0 ; i < keys_num_ ; i ++ ){
@@ -158,7 +179,52 @@ public:
   ExecutorStatus get_worker_status() override {
     return static_cast<ExecutorStatus>(worker_status_.load());
   }
+  std::vector<size_t> debug_record_keys() override {
+    return query.Y_KEY;
+  }
+  std::vector<size_t> debug_record_keys_master() override {
+    std::vector<size_t> query_master;
 
+    for(int i = 0 ; i < query.Y_KEY.size(); i ++ ){
+
+      int w_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, 0, 
+                                                  (void*)& query.Y_KEY[i]);
+
+      query_master.push_back(w_c_id);
+    }
+
+    return query_master;
+  }
+  TransactionResult transmit_execute(std::size_t worker_id) override {
+    int ycsbTableID = ycsb::tableID;
+    size_t keys_num_ = query.Y_KEY.size();
+
+    for (auto i = 0u; i < keys_num_; i++) {
+      auto key = query.Y_KEY[i];
+      storage.ycsb_keys[i].Y_KEY = key;
+
+      // LOG(INFO) << sizeof(storage.ycsb_keys[i]) << "  " << sizeof(storage.ycsb_values[i]);
+
+      auto key_partition_id = key / context.keysPerPartition; // db.getPartitionID(context, ycsbTableID, key);
+      if(key_partition_id == context.partition_num){
+        // 
+        return TransactionResult::ABORT;
+      }
+      
+      if (query.UPDATE[i]) {
+        this->search_for_update(ycsbTableID, key_partition_id,
+                                storage.ycsb_keys[i], storage.ycsb_values[i]);
+      } else {
+        this->search_for_read(ycsbTableID, key_partition_id,
+                              storage.ycsb_keys[i], storage.ycsb_values[i]);
+      }
+    }
+
+    if (this->process_migrate_requests(worker_id)) {
+      return TransactionResult::ABORT;
+    } 
+    return TransactionResult::TRANSMIT_REQUEST;
+  };
   TransactionResult prepare_read_execute(std::size_t worker_id) override {
     
     size_t keys_num_ = query.Y_KEY.size();
@@ -198,12 +264,17 @@ public:
       }
       break;
     case ReadMethods::LOCAL_READ:
-      if (this->process_local_requests(worker_id)) {
+      if (this->process_migrate_requests(worker_id)) {
         ret = TransactionResult::NOT_LOCAL_NORETRY;
       }
       break;
     case ReadMethods::REMOTE_READ_WITH_TRANSFER:
       if (this->process_requests(worker_id)) {
+        ret = TransactionResult::ABORT;
+      }
+      break;
+    case ReadMethods::REMASTER_ONLY:
+      if (this->process_remaster_requests(worker_id)) {
         ret = TransactionResult::ABORT;
       }
       break;
@@ -256,14 +327,14 @@ public:
       }
     }
 
-    // if (this->execution_phase && context.nop_prob > 0) {
-    //   auto x = random.uniform_dist(1, 10000);
-    //   if (x <= context.nop_prob) {
+    if (this->execution_phase && context.nop_prob > 0) {
+      auto x = random.uniform_dist(1, 10000);
+      if (x <= context.nop_prob) {
         for (auto i = 0u; i < context.n_nop; i++) {
           asm("nop");
         }
-    //   }
-    // }
+      }
+    }
 
     return TransactionResult::READY_TO_COMMIT;
   };
@@ -272,7 +343,9 @@ public:
   void reset_query() override {
     query = makeYCSBQuery()(context, partition_id, random, db, 0, 0);
   }
-  
+  std::string print_raw_query_str() override{
+    DCHECK(false);
+  }
   const std::vector<u_int64_t> get_query() override{
     using T = u_int64_t;
 
@@ -281,6 +354,21 @@ public:
     for (auto i = 0u; i < keys_num_; i++) {
       auto key = static_cast<T>(query.Y_KEY[i]);
       record_keys.push_back(key);
+    }
+    return record_keys;
+  }
+
+  const std::vector<u_int64_t> get_query_master() override{
+    using T = u_int64_t;
+
+    std::vector<T> record_keys;
+    size_t keys_num_ = query.Y_KEY.size();
+    for (auto i = 0u; i < keys_num_; i++) {
+      auto key = static_cast<T>(query.Y_KEY[i]);
+      auto c_id = db.get_dynamic_coordinator_id(context.coordinator_num, 
+                                                ycsb::tableID, 
+                                                (void*)& key);
+      record_keys.push_back(c_id);
     }
     return record_keys;
   }
@@ -319,7 +407,7 @@ public:
           cur_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, ycsbTableID, (void*)& query_keys[j]);
         } else {
           // cal the partition to figure out the coordinator-id
-          cur_c_id = query_keys[j] / context.keysPerPartition % context.coordinator_num;
+          cur_c_id = (query_keys[j] / context.keysPerPartition + 1) % context.coordinator_num;
         }
         from_nodes_id.insert(cur_c_id);
       }
@@ -340,7 +428,7 @@ public:
           cur_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, ycsbTableID, (void*)& query_keys[j]);
         } else {
           // cal the partition to figure out the coordinator-id
-          cur_c_id = query_keys[j] / context.keysPerPartition % context.coordinator_num;
+          cur_c_id = (query_keys[j] / context.keysPerPartition + 1) % context.coordinator_num;
         }
         if(!from_nodes_id.count(cur_c_id)){
           from_nodes_id[cur_c_id] = 1;
@@ -360,9 +448,34 @@ public:
      * @brief must be master and local 判断是不是跨节点事务
      * @return true/false
      */
-    std::set<int> from_nodes_id = std::move(txn_nodes_involved(is_dynamic));
-    // from_nodes_id.insert(context.coordinator_id);
-    return from_nodes_id.size() > 1; 
+      size_t ycsbTableID = ycsb::ycsb::tableID;
+      auto& query_keys = this->get_query();
+      int nodes[20] = {0};
+
+      for (size_t j = 0 ; j < query_keys.size(); j ++ ){
+        // LOG(INFO) << "query_keys[j] : " << query_keys[j];
+        // judge if is cross txn
+        size_t cur_c_id = -1;
+        if(is_dynamic){
+          // look-up the dynamic router to find-out where
+          cur_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, ycsbTableID, (void*)& query_keys[j]);
+        } else {
+          // cal the partition to figure out the coordinator-id
+          cur_c_id = (query_keys[j] / context.keysPerPartition + 1) % context.coordinator_num;
+        }
+        nodes[cur_c_id] += 1;
+      }
+      
+      int cnt = 0;
+      for(int i = 0 ; i < 20; i ++ ){
+        if(nodes[i] > 0){
+          cnt += 1;
+        }
+      }
+     return cnt > 1;
+    // std::set<int> from_nodes_id = std::move(txn_nodes_involved(is_dynamic));
+    // // from_nodes_id.insert(context.coordinator_id);
+    // return from_nodes_id.size() > 1; 
   }
   std::size_t get_partition_id(){
     return partition_id;
@@ -376,6 +489,9 @@ private:
   std::size_t partition_id;
   YCSBQuery query;
   bool is_transmit_request;
+  int on_replica_id;       // only for hermes
+  int is_real_distributed; // only for hermes
+  
 };
 } // namespace ycsb
 

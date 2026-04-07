@@ -38,7 +38,7 @@ public:
 
     // write to db
     write(txn, lock_manager_id, n_lock_manager, replica_group_size);
-
+    // LOG(INFO) << "TXN[" << i << "] LOCK : " << *(int*)key;
     // release read/write locks
     release_read_locks(txn, lock_manager_id, n_lock_manager,
                        replica_group_size);
@@ -58,7 +58,7 @@ public:
       auto partitionId = writeKey.get_partition_id();
       auto table = db.find_table(tableId, partitionId);
 
-      if (!partitioner.is_partition_replicated_on(partitionId, context.coordinator_id)) {
+      if (!partitioner.has_master_partition(partitionId)) {
         continue;
       }
 
@@ -86,7 +86,7 @@ public:
       auto partitionId = readKey.get_partition_id();
       auto table = db.find_table(tableId, partitionId);
 
-      if (!partitioner.is_partition_replicated_on(partitionId, context.coordinator_id)) {
+      if (!partitioner.has_master_partition(partitionId)) {
         continue;
       }
 
@@ -104,6 +104,8 @@ public:
       auto value = readKey.get_value();
       std::atomic<uint64_t> &tid = table->search_metadata(key);
       CalvinHelper::read_lock_release(tid);
+      
+      // LOG(INFO) << "TXN[" << txn.id << "] unLOCK : " << *(int*)key;
     }
   }
 
@@ -120,7 +122,7 @@ public:
       auto partitionId = writeKey.get_partition_id();
       auto table = db.find_table(tableId, partitionId);
 
-      if (!partitioner.is_partition_replicated_on(partitionId, context.coordinator_id)) {
+      if (!partitioner.has_master_partition(partitionId)) {
         continue;
       }
 
@@ -134,6 +136,8 @@ public:
       auto value = writeKey.get_value();
       std::atomic<uint64_t> &tid = table->search_metadata(key);
       CalvinHelper::write_lock_release(tid);
+
+      // LOG(INFO) << "TXN[" << txn.id << "] unLOCK : " << *(int*)key;
     }
   }
 

@@ -24,6 +24,7 @@ public:
       : coordinator_id(coordinator_id), partition_id(partition_id),
         startTime(std::chrono::steady_clock::now()), partitioner(partitioner) {
     reset();
+    b.startTime = this->startTime;
   }
 
   virtual ~CalvinTransaction() = default;
@@ -52,15 +53,18 @@ public:
 
   virtual TransactionResult execute(std::size_t worker_id) = 0;
 
-  // virtual TransactionResult local_execute(std::size_t worker_id) = 0;
+  virtual TransactionResult transmit_execute(std::size_t worker_id) = 0;
+virtual std::vector<size_t> debug_record_keys() = 0;
+virtual std::vector<size_t> debug_record_keys_master() = 0;
 
   virtual void reset_query() = 0;
-
+  virtual std::string print_raw_query_str() =0;
   virtual const std::vector<u_int64_t> get_query() = 0;
   virtual const std::string get_query_printed() = 0;
+  virtual const std::vector<u_int64_t> get_query_master() = 0;
   virtual const std::vector<bool> get_query_update() = 0;
 
-    virtual std::set<int> txn_nodes_involved(bool is_dynamic) = 0;
+  virtual std::set<int> txn_nodes_involved(bool is_dynamic) = 0;
   virtual std::unordered_map<int, int> txn_nodes_involved(int& max_node, bool is_dynamic) = 0;
   virtual bool check_cross_node_txn(bool is_dynamic) = 0;
   virtual std::size_t get_partition_id() = 0;
@@ -180,7 +184,7 @@ public:
                                    readKey.get_key(), readKey.get_value());
         } else {
 
-          if (partitioner.has_master_partition(readSet[i].get_partition_id())) {
+          if (partitioner.has_master_partition(readSet[i].get_partition_id())) { 
             local_read.fetch_add(1);
           } else {
             remote_read.fetch_add(1);
@@ -245,7 +249,10 @@ public:
         // spin on local & remote read
         while (local_read.load() > 0 || remote_read.load() > 0) {
           // process remote reads for other workers
+          int a = local_read.load();
+          int b = remote_read.load();
           remote_request_handler(worker_id);
+          std::this_thread::sleep_for(std::chrono::microseconds(5));
         }
 
         return false;
@@ -256,7 +263,12 @@ public:
     };
   }
 
-  bool process_local_requests(std::size_t worker_id){
+  bool process_remaster_requests(std::size_t worker_id) {
+    DCHECK(false);
+    return true;
+  }
+  
+  bool process_migrate_requests(std::size_t worker_id){
     // 
     DCHECK(false);
     return false;
@@ -319,5 +331,10 @@ public:
   std::vector<bool> active_coordinators;
   Operation operation; // never used
   std::vector<CalvinRWKey> readSet, writeSet;
+
+  Breakdown b;
+  int pendingResponses;
+  //
+  int on_replica_id;
 };
 } // namespace star

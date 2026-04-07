@@ -5,7 +5,6 @@
 #pragma once
 
 #include "glog/logging.h"
-
 #include "benchmark/tpcc/Database.h"
 #include "benchmark/tpcc/Query.h"
 #include "benchmark/tpcc/Schema.h"
@@ -27,48 +26,72 @@ public:
   using StorageType = Storage;
 
   NewOrder(std::size_t coordinator_id, std::size_t partition_id,
+           std::atomic<uint32_t> &worker_status, 
            DatabaseType &db, const ContextType &context, RandomType &random,
-           Partitioner &partitioner, Storage &storage)
-      : Transaction(coordinator_id, partition_id, partitioner), db(db),
+           Partitioner &partitioner, Storage &storage, 
+           double cur_timestamp)
+      : Transaction(coordinator_id, partition_id, partitioner), 
+        worker_status_(worker_status), db(db),
         context(context), random(random), storage(storage),
         partition_id(partition_id),
-        query(makeNewOrderQuery()(context, partition_id + 1, random)) {}
+        query(makeNewOrderQuery()(context, partition_id + 1, cur_timestamp, random)) {
+          DCHECK(this->partition_id < (1 << 30));
+        }
 
 
-  NewOrder(std::size_t coordinator_id, std::size_t partition_id,
+  NewOrder(std::size_t coordinator_id, std::size_t partition_id,  
+           std::atomic<uint32_t> &worker_status, 
+           DatabaseType &db, const ContextType &context,
+           RandomType &random, Partitioner &partitioner,
+           Storage &storage, simpleTransaction& simple_txn, bool is_transmit)
+      : Transaction(coordinator_id, partition_id, partitioner), 
+        worker_status_(worker_status), db(db),
+        context(context), random(random), storage(storage),
+        query(makeNewOrderQuery()(simple_txn.keys, is_transmit)) {
+          // size_t size_ = simple_txn.keys.size();
+          // DCHECK(simple_txn.keys.size() == 13);
+          // 
+          this->partition_id = query.W_ID - 1;
+          // DCHECK(this->partition_id < (1 << 30));
+          query.record_keys = simple_txn.keys;
+          is_transmit_request = simple_txn.is_transmit_request;
+        }
+
+  NewOrder(std::size_t coordinator_id, std::size_t partition_id,  
+           std::atomic<uint32_t> &worker_status, 
+           DatabaseType &db, const ContextType &context,
+           RandomType &random, Partitioner &partitioner,
+           Storage &storage, simpleTransaction& simple_txn)
+      : Transaction(coordinator_id, partition_id, partitioner), 
+        worker_status_(worker_status), db(db),
+        context(context), random(random), storage(storage),
+        query(makeNewOrderQuery()(simple_txn.keys)) {
+          this->partition_id = query.W_ID - 1;
+          DCHECK(this->partition_id < (1 << 30));
+          this->is_transmit_request = simple_txn.is_transmit_request;
+        }
+
+
+  NewOrder(std::size_t coordinator_id, std::size_t partition_id, 
+                  std::atomic<uint32_t> &worker_status,
                   DatabaseType &db, const ContextType &context,
                   RandomType &random, Partitioner &partitioner,
-                  Storage &storage, simpleTransaction& simple_txn)
-      : Transaction(coordinator_id, partition_id, partitioner), db(db),
+                  Storage &storage, 
+                  Transaction& txn)
+      : Transaction(coordinator_id, partition_id, partitioner), 
+        worker_status_(worker_status), db(db),
         context(context), random(random), storage(storage),
-        partition_id(partition_id) {
-          size_t size_ = simple_txn.keys.size();
-
-          DCHECK(simple_txn.keys.size() == 13);
-          // 
-          auto c_record_key = simple_txn.keys[2];
-
-          int32_t w_id = (c_record_key & RECORD_COUNT_W_ID_VALID) >> RECORD_COUNT_W_ID_OFFSET;
-          int32_t d_id = (c_record_key & RECORD_COUNT_D_ID_VALID) >> RECORD_COUNT_D_ID_OFFSET;
-          int32_t c_id = (c_record_key & RECORD_COUNT_C_ID_VALID) >> RECORD_COUNT_C_ID_OFFSET;
-
-          query.W_ID = w_id;
-          query.D_ID = d_id;
-
-          query.C_ID = c_id;
-          query.O_OL_CNT = 10; // random.uniform_dist(5, 10);
-
-          for (auto i = 0; i < query.O_OL_CNT; i++) {
-            auto cur_key = simple_txn.keys[3 + i];
-
-            int32_t w_id = (cur_key & RECORD_COUNT_W_ID_VALID) >> RECORD_COUNT_W_ID_OFFSET;
-            int32_t s_id = (cur_key & RECORD_COUNT_OL_ID_VALID);
-
-            query.INFO[i].OL_I_ID = s_id;// (query.C_ID - 1) * query.O_OL_CNT + i + 1;// (query.W_ID - 1) * 3000 + query.C_ID;
-            query.INFO[i].OL_SUPPLY_W_ID = w_id;
-            query.INFO[i].OL_QUANTITY = 5;// random.uniform_dist(1, 10);
-          }
-          is_transmit_request = simple_txn.is_transmit_request;
+        partition_id(partition_id), 
+        query(makeNewOrderQuery()(txn.get_query())) {
+          /**
+           * @brief convert from the generated txns
+           * 
+           */
+          this->partition_id = query.W_ID - 1;
+          // this->is_transmit_request = txn.is_transmit_request;
+          DCHECK(this->partition_id < (1 << 30));
+          this->on_replica_id = txn.on_replica_id;
+          // LOG(INFO) << "reset ! " << txn.on_replica_id;
         }
 
   virtual ~NewOrder() override = default;
@@ -77,7 +100,7 @@ public:
   }
   TransactionResult execute(std::size_t worker_id) override {
 
-    int32_t W_ID = this->partition_id + 1;
+    int32_t W_ID = query.W_ID;
 
     // The input data (see Clause 2.4.3.2) are communicated to the SUT.
 
@@ -137,8 +160,8 @@ public:
         return TransactionResult::ABORT_NORETRY;
       }
 
-      this->search_local_index(itemTableID, 0, storage.item_keys[i],
-                               storage.item_values[i]);
+      // this->search_local_index(itemTableID, 0, storage.item_keys[i],
+      //                          storage.item_values[i]);
 
       // The row in the STOCK table with matching S_I_ID (equals OL_I_ID) and
       // S_W_ID (equals OL_SUPPLY_W_ID) is selected.
@@ -299,14 +322,104 @@ public:
     return TransactionResult::READY_TO_COMMIT;
   }
 
+  std::vector<size_t> debug_record_keys() override {
+    return query.record_keys;
+  }
+
+  std::vector<size_t> debug_record_keys_master() override {
+    std::vector<size_t> record_keys;
+
+    for(int i = 0 ; i < query.record_keys.size(); i ++ ){
+      Record rec;
+      rec.set_real_key(query.record_keys[i]);;
+      int w_c_id, d_c_id, c_c_id, s_c_id;
+
+      switch (rec.table_id)
+      {
+      case tpcc::warehouse::tableID:
+          w_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, 
+                                                      tpcc::warehouse::tableID, 
+                                                      (void*)& rec.key.w_key);
+
+          record_keys.push_back(w_c_id);
+          break;
+      case tpcc::district::tableID:
+          d_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, 
+                                                      tpcc::district::tableID, 
+                                                      (void*)& rec.key.d_key);
+          record_keys.push_back(d_c_id);
+          break;
+      case tpcc::customer::tableID:
+          c_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, 
+                                                      tpcc::customer::tableID, 
+                                                      (void*)& rec.key.c_key);
+          record_keys.push_back(c_c_id);
+          break;
+      case tpcc::stock::tableID:
+          s_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, 
+                                                      tpcc::stock::tableID, 
+                                                      (void*)& rec.key.s_key);
+          record_keys.push_back(s_c_id);
+          break;
+      default:
+          DCHECK(false);
+          break;
+      }
+    }
+    return record_keys;
+  }
+
+  TransactionResult transmit_execute(std::size_t worker_id) override {
+    storage.key_value.reserve(query.record_keys.size());
+    for(int i = 0 ; i < query.record_keys.size(); i ++ ){
+      storage.key_value[i].set_real_key(query.record_keys[i]);;
+
+      switch (storage.key_value[i].table_id)
+      {
+      case tpcc::warehouse::tableID:
+          this->search_for_update(storage.key_value[i].table_id, 
+                                  storage.key_value[i].key.w_key.W_ID - 1, 
+                                  storage.key_value[i].key.w_key, 
+                                  storage.key_value[i].value.w_val);
+          break;
+      case tpcc::district::tableID:
+          this->search_for_update(storage.key_value[i].table_id, 
+                                  storage.key_value[i].key.d_key.D_W_ID - 1, 
+                                  storage.key_value[i].key.d_key, 
+                                  storage.key_value[i].value.d_val);
+          break;
+      case tpcc::customer::tableID:
+          this->search_for_update(storage.key_value[i].table_id, 
+                                  storage.key_value[i].key.c_key.C_W_ID - 1, 
+                                  storage.key_value[i].key.c_key, 
+                                  storage.key_value[i].value.c_val);
+          break;
+      case tpcc::stock::tableID:
+          this->search_for_update(storage.key_value[i].table_id, 
+                                  storage.key_value[i].key.s_key.S_W_ID - 1, 
+                                  storage.key_value[i].key.s_key, 
+                                  storage.key_value[i].value.s_val);
+          break;
+      default:
+          DCHECK(false);
+          break;
+      }
+    }
+    // LOG(INFO) << "pendingResponses : " << this->pendingResponses;
+    if (this->process_migrate_requests(worker_id)) {
+      return TransactionResult::ABORT;
+    }
+    return TransactionResult::TRANSMIT_REQUEST;
+  }
+
+
   ExecutorStatus get_worker_status() override {
-    DCHECK(false);
-    return static_cast<ExecutorStatus>(0);
+    return static_cast<ExecutorStatus>(worker_status_.load());
   }
   
   TransactionResult prepare_read_execute(std::size_t worker_id) override {
     
-    int32_t W_ID = this->partition_id + 1;
+    int32_t W_ID = query.W_ID;
 
     // The input data (see Clause 2.4.3.2) are communicated to the SUT.
 
@@ -323,6 +436,7 @@ public:
     // if(key_partition_id == context.partition_num){
     //   return TransactionResult::ABORT_NORETRY;
     // }
+    DCHECK(key_partition_id < (1 << 30));
     this->search_for_read(warehouseTableID, key_partition_id, storage.warehouse_key,
                           storage.warehouse_value);
 
@@ -409,12 +523,17 @@ public:
       }
       break;
     case ReadMethods::LOCAL_READ:
-      if (this->process_local_requests(worker_id)) {
+      if (this->process_migrate_requests(worker_id)) {
         ret = TransactionResult::NOT_LOCAL_NORETRY;
       }
       break;
     case ReadMethods::REMOTE_READ_WITH_TRANSFER:
       if (this->process_requests(worker_id)) {
+        ret = TransactionResult::ABORT;
+      }
+      break;
+    case ReadMethods::REMASTER_ONLY:
+      if (this->process_remaster_requests(worker_id)) {
         ret = TransactionResult::ABORT;
       }
       break;
@@ -427,7 +546,7 @@ public:
 
   TransactionResult prepare_update_execute(std::size_t worker_id) override {
 
-    int32_t W_ID = this->partition_id + 1;
+    int32_t W_ID = query.W_ID;
     int32_t D_ID = query.D_ID;
     int32_t C_ID = query.C_ID;
 
@@ -592,7 +711,7 @@ public:
   
 
   void reset_query() override {
-    query = makeNewOrderQuery()(context, partition_id, random);
+    query = makeNewOrderQuery()(context, partition_id, 0, random);
   }
   const std::vector<bool> get_query_update() override {
     std::vector<bool> ret;
@@ -602,7 +721,9 @@ public:
     return ret; 
   };
 
-
+  std::string print_raw_query_str() override{
+    return std::to_string(query.W_ID) + " " + std::to_string(query.D_ID) + " " + std::to_string(query.C_ID);
+  }
 
   const std::vector<u_int64_t> get_query() override{
     /**
@@ -635,6 +756,11 @@ public:
                                                    (W_ID << RECORD_COUNT_W_ID_OFFSET) + 
                                                    (D_ID << RECORD_COUNT_D_ID_OFFSET) + 
                                                    (C_ID << RECORD_COUNT_C_ID_OFFSET);
+
+    int32_t w_id = (c_record_key & RECORD_COUNT_W_ID_VALID) >>RECORD_COUNT_W_ID_OFFSET;
+    int32_t d_id = (c_record_key & RECORD_COUNT_D_ID_VALID) >>RECORD_COUNT_D_ID_OFFSET;
+    int32_t c_id = (c_record_key & RECORD_COUNT_C_ID_VALID) >>RECORD_COUNT_C_ID_OFFSET;
+    DCHECK(D_ID >= 1 && C_ID >= 1);
     record_keys.push_back(w_record_key);
     record_keys.push_back(d_record_key);
     record_keys.push_back(c_record_key);
@@ -648,9 +774,10 @@ public:
       T OL_I_ID = query.INFO[i].OL_I_ID;
       T OL_SUPPLY_W_ID = query.INFO[i].OL_SUPPLY_W_ID;
       // stock_keys.push_back(stock::key(OL_SUPPLY_W_ID, OL_I_ID));
-      T ol_supply_w_record_key = (static_cast<T>(stock::tableID) << RECORD_COUNT_TABLE_ID_OFFSET) + 
-                                                       (OL_SUPPLY_W_ID << RECORD_COUNT_W_ID_OFFSET) +
-                                                       (OL_I_ID);
+      T ol_supply_w_record_key = 
+      (static_cast<T>(stock::tableID) << RECORD_COUNT_TABLE_ID_OFFSET) + 
+                     (OL_SUPPLY_W_ID << RECORD_COUNT_W_ID_OFFSET) +
+                            (OL_I_ID);
 
       ol_supply_w_record_keys.insert(ol_supply_w_record_key);
     }
@@ -659,6 +786,58 @@ public:
     }
     return record_keys;
   }
+
+  const std::vector<u_int64_t> get_query_master() override{
+    /**
+     * @brief for generate the COUNT message for Recorder!
+     * @add by truth 22-02-24
+     */
+    using T = u_int64_t;
+    std::vector<T> record_keys;
+    // 4bit    | 6bit | 10bit | 15bit | 20bit
+    // tableID | W_id | D_id  | C_id  | Lo_id
+
+    // record_keys
+    // record_keys[0-2]: w_record_key, d_record_key, c_record_key
+    // record_keys[3-13]: ol_supply_w_record_keys
+    //
+
+    T W_ID = this->partition_id + 1; 
+    T D_ID = query.D_ID;
+    T C_ID = query.C_ID;
+
+    tpcc::warehouse::key w_id = tpcc::warehouse::key(W_ID);
+    tpcc::district::key  d_id = tpcc::district::key(W_ID, D_ID);
+    tpcc::customer::key  c_id = tpcc::customer::key(W_ID, D_ID, C_ID);
+
+    auto w_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, 
+                                                tpcc::warehouse::tableID, 
+                                                (void*)& w_id);
+    auto d_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, 
+                                                tpcc::district::tableID, 
+                                                (void*)& d_id);
+    auto c_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, 
+                                                tpcc::customer::tableID, 
+                                                (void*)& c_id);
+
+    record_keys.push_back(w_c_id);
+    record_keys.push_back(d_c_id);
+    record_keys.push_back(c_c_id);
+    
+    for (int i = 0; i < query.O_OL_CNT; i++) {
+      T OL_I_ID = query.INFO[i].OL_I_ID;
+      T OL_SUPPLY_W_ID = query.INFO[i].OL_SUPPLY_W_ID;
+      tpcc::stock::key s_id = tpcc::stock::key(OL_SUPPLY_W_ID, OL_I_ID);
+
+      auto s_c_id = db.get_dynamic_coordinator_id(context.coordinator_num, 
+                                                  tpcc::stock::tableID, 
+                                                  (void*)& s_id);
+      record_keys.push_back(s_c_id);
+    }
+
+    return record_keys;
+  }
+
 
   const std::string get_query_printed() override {
     std::string print_ = "";
@@ -671,7 +850,7 @@ public:
   std::set<int> txn_nodes_involved(bool is_dynamic) override {
     std::set<int> from_nodes_id;
 
-    int32_t W_ID = this->partition_id + 1;
+    int32_t W_ID = query.W_ID;
     int32_t D_ID = query.D_ID;
     int32_t C_ID = query.C_ID;
     auto itemTableID = item::tableID;
@@ -743,6 +922,7 @@ private:
   }
 
 private:
+  std::atomic<uint32_t> &worker_status_;
   DatabaseType &db;
   const ContextType &context;
   RandomType &random;
@@ -750,6 +930,8 @@ private:
   std::size_t partition_id;
   NewOrderQuery query;
   bool is_transmit_request;
+  int on_replica_num; // only for hermes
+  int is_real_distributed; // only for hermes
 };
 
 template <class Transaction> class Payment : public Transaction {
@@ -773,7 +955,7 @@ public:
   }
   TransactionResult execute(std::size_t worker_id) override {
 
-    int32_t W_ID = this->partition_id + 1;
+    int32_t W_ID = query.W_ID;
 
     // The input data (see Clause 2.5.3.2) are communicated to the SUT.
 
@@ -928,6 +1110,21 @@ public:
     DCHECK(false);
     return TransactionResult::READY_TO_COMMIT;
   };
+
+  std::vector<size_t> debug_record_keys() override {
+    return query.record_keys;
+  }
+  std::vector<size_t> debug_record_keys_master() override {
+    std::vector<size_t> query_master;
+    DCHECK(false);
+    return query_master;
+  }
+  TransactionResult transmit_execute(std::size_t worker_id) override {
+    DCHECK(false);
+    return TransactionResult::READY_TO_COMMIT;
+  };
+
+
   TransactionResult read_execute(std::size_t worker_id, ReadMethods local_read_only) override {
     DCHECK(false);
     return TransactionResult::READY_TO_COMMIT;
@@ -945,6 +1142,9 @@ public:
   void reset_query() override {
     query = makePaymentQuery()(context, partition_id, random);
   }
+  std::string print_raw_query_str() override{
+    DCHECK(false);
+  }
   const std::vector<u_int64_t> get_query() override{
     using T = u_int64_t;
 
@@ -954,6 +1154,16 @@ public:
     return record_keys;
   }
 
+  const std::vector<u_int64_t> get_query_master() override{
+    /**
+     * @brief for generate the COUNT message for Recorder!
+     * @add by truth 22-02-24
+     */
+    using T = u_int64_t;
+    std::vector<T> record_keys;
+    DCHECK(false);
+    return record_keys;
+  }
   const std::string get_query_printed() override {
     std::string print_ = "";
     for(auto i : get_query()){
@@ -998,6 +1208,8 @@ private:
   std::size_t partition_id;
   PaymentQuery query;
   bool is_transmit_request;
+  int on_replica_num; // only for hermes
+  int is_real_distributed; // only for hermes
 };
 
 } // namespace tpcc

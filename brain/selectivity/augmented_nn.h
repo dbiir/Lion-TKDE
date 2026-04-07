@@ -1,25 +1,3 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// augmented_nn.cpp
-//
-// Identification: src/brain/workload/augmented_nn.cpp
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// augmented_nn.h
-//
-// Identification: src/include/brain/workload/augmented_nn.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
 
 #pragma once
 
@@ -35,7 +13,7 @@
 #include <string>
 #include "brain/workload/base_tf.h"
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 
 template <typename Type>
@@ -268,5 +246,5 @@ float AugmentedNN::ValidateEpoch(const matrix_eig &mat) {
 
 }
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain
 

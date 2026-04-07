@@ -1,34 +1,13 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// linear_model.cpp
-//
-// Identification: src/brain/workload/linear_model.cpp
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "brain/workload/linear_model.h"
 #include "brain/util/model_util.h"
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// linear_model.h
-//
-// Identification: src/include/brain/workload/linear_model.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
 
 
 #include "brain/workload/base_tf.h"
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 class TimeSeriesLinearReg : public virtual BaseForecastModel {
  public:
@@ -106,4 +85,4 @@ float TimeSeriesLinearReg::ValidateEpoch(const matrix_eig &data) {
 }
 
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain

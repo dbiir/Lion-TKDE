@@ -11,6 +11,7 @@
 #include "core/Table.h"
 #include "protocol/Lion/LionRWKey.h"
 #include <limits.h>
+#include "common/Time.h"
 
 #include <chrono>
 #include <glog/logging.h>
@@ -27,6 +28,7 @@ public:
       : coordinator_id(coordinator_id), partition_id(partition_id),
         startTime(std::chrono::steady_clock::now()), partitioner(partitioner) {
     reset();
+    b.startTime = startTime;
   }
 
   virtual ~LionTransaction() = default;
@@ -39,7 +41,8 @@ public:
     abort_read_validation = false;
     local_validated = false;
     si_in_serializable = false;
-    distributed_transaction = false;
+    // distributed_transaction = false;
+    fully_single_transaction = false;
     execution_phase = true;
 
     remaster_cnt = 0;
@@ -49,7 +52,7 @@ public:
     readSet.clear();
     writeSet.clear();
 
-    routerSet.clear(); // add by truth 22-03-25
+    // routerSet.clear(); // add by truth 22-03-25
   }
   virtual bool is_transmit_requests() = 0;
   virtual ExecutorStatus get_worker_status() = 0;
@@ -58,15 +61,17 @@ public:
   virtual TransactionResult prepare_update_execute(std::size_t worker_id) = 0;
 
   virtual TransactionResult execute(std::size_t worker_id) = 0;
-
-  // virtual TransactionResult local_execute(std::size_t worker_id) = 0;
+  virtual std::vector<size_t> debug_record_keys() = 0;
+  virtual std::vector<size_t> debug_record_keys_master() = 0;
+  virtual TransactionResult transmit_execute(std::size_t worker_id) = 0;
 
 
 
   virtual void reset_query() = 0;
-
+  virtual std::string print_raw_query_str() =0;
   virtual const std::vector<u_int64_t> get_query() = 0;
   virtual const std::string get_query_printed() = 0;
+  virtual const std::vector<u_int64_t> get_query_master() = 0;
   virtual const std::vector<bool> get_query_update() = 0;
 
     virtual std::set<int> txn_nodes_involved(bool is_dynamic) = 0;
@@ -90,7 +95,7 @@ public:
 
     add_to_read_set(readKey);
     // add by truth 22-03-25
-    add_to_router_set(readKey);
+    // add_to_router_set(readKey);
     
   }
 
@@ -111,7 +116,7 @@ public:
     add_to_read_set(readKey);
     
     // add by truth 22-03-25
-    add_to_router_set(readKey);
+    // add_to_router_set(readKey);
 
   }
 
@@ -134,7 +139,7 @@ public:
     add_to_read_set(readKey);
 
     // add by truth 22-03-25
-    add_to_router_set(readKey);
+    // add_to_router_set(readKey);
 
   }
 
@@ -155,6 +160,11 @@ public:
     add_to_write_set(writeKey);
   }
 
+
+  void set_id(uint32_t id){
+    this->id = id;
+  }
+  
   bool process_requests(std::size_t worker_id) {
     /**
      * @brief calling functions inited by handle
@@ -173,7 +183,9 @@ public:
     //   debug += " " + std::to_string(*(int*)readSet[i].get_key()) + "(" + std::to_string(readSet[i].get_write_lock_bit()) + " " + std::to_string(readSet[i].get_read_respond_bit()) + ")";
     // }
     // VLOG(DEBUG_V14) << "DEBUG TXN READ SET " << debug;
-
+    if(is_abort()){
+      success = false;
+    }
     // cannot use unsigned type in reverse iteration
     for (int i = int(readSet.size()) - 1; i >= 0; i--) {
       // early return
@@ -195,9 +207,12 @@ public:
 
     if (pendingResponses > 0) {
       message_flusher();
+      // LOG(INFO) << "txn.pendingResponses " << id << " " << pendingResponses;
       while (pendingResponses > 0) {
         remote_request_handler();
         // 
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+
         status = get_worker_status();
         if(status == ExecutorStatus::EXIT){
           LOG(INFO) << "TRANSMITER SHOULD BE STOPPED";
@@ -215,6 +230,51 @@ public:
       return true;
     }
   }
+
+  bool process_remaster_requests(std::size_t worker_id) {
+    /**
+     * @brief calling functions inited by handle
+     * 
+     * @param i 
+     */
+    bool success = true;
+    // 
+    tids.resize(readSet.size(), nullptr);
+
+    // cannot use unsigned type in reverse iteration
+    for (int i = int(readSet.size()) - 1; i >= 0; i--) {
+      // early return
+      if (!readSet[i].get_read_request_bit()) {
+        break;
+      }
+
+      const LionRWKey &readKey = readSet[i];
+      auto tid =
+          remasterOnlyReadRequestHandler(readKey.get_table_id(), readKey.get_partition_id(),
+                             i, readKey.get_key(), readKey.get_value(),
+                             readKey.get_local_index_read_bit(), success);
+      if(success == false){
+        break;
+      }
+      readSet[i].clear_read_request_bit();
+      readSet[i].set_tid(tid);
+    }
+
+    if (pendingResponses > 0) {
+      DCHECK(false);
+    }
+    if(is_abort()){
+      success = false;
+    }
+    if(success == true){
+      return false;
+    } else {
+      return true;
+    }
+  }
+
+  // 
+
 
 
   bool process_read_only_requests(std::size_t worker_id) {
@@ -243,13 +303,15 @@ public:
       message_flusher();
       while (pendingResponses > 0) {
         remote_request_handler();
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+
       }
     }
     return false;
   }
 
 
-  bool process_local_requests(std::size_t worker_id) {
+  bool process_migrate_requests(std::size_t worker_id) {
     /**
      * @brief 
      * 
@@ -272,7 +334,7 @@ public:
         return true;
       } 
       
-      routerSet[i].set_write_lock_bit();
+      // routerSet[i].set_write_lock_bit();
 
       readSet[i].clear_read_request_bit();
       readSet[i].set_tid(tid);
@@ -312,15 +374,15 @@ public:
     return writeSet.size() - 1;
   }
 
-  std::size_t add_to_router_set(const LionRWKey &key) {
-    routerSet.push_back(key);
-    return routerSet.size() - 1;
-  }
+  // std::size_t add_to_router_set(const LionRWKey &key) {
+  //   routerSet.push_back(key);
+  //   return routerSet.size() - 1;
+  // }
 
   bool is_abort(){
     return abort_lock || abort_read_validation;
   }
-  
+
 public:
   std::size_t coordinator_id, partition_id;
   std::chrono::steady_clock::time_point startTime;
@@ -335,6 +397,7 @@ public:
 
   bool abort_lock, abort_read_validation, local_validated, si_in_serializable;
   bool distributed_transaction;
+  bool fully_single_transaction;
   bool execution_phase;
   // bool is_transmit_request;
 
@@ -345,6 +408,11 @@ public:
                          const void *, void *, 
                          bool, bool&)>
       readRequestHandler;
+  
+    std::function<uint64_t(std::size_t, std::size_t, uint32_t, 
+                         const void *, void *, 
+                         bool, bool&)>
+      remasterOnlyReadRequestHandler;
   
   std::function<uint64_t(std::size_t, std::size_t, uint32_t, 
                        const void *, void *, 
@@ -363,9 +431,12 @@ public:
 
   Partitioner &partitioner;
   Operation operation;
-  std::vector<LionRWKey> readSet, writeSet, routerSet;
+  std::vector<LionRWKey> readSet, writeSet; // , routerSet;
 
   ExecutorStatus status;
+  uint32_t id;
+
+  Breakdown b;
 };
 
 } // namespace star

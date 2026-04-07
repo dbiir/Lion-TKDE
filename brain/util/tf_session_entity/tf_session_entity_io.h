@@ -1,30 +1,8 @@
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// tf_session_entity_io.cpp
-//
-// Identification: src/brain/util/tf_session_entity/tf_session_entity_io.cpp
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "brain/util/tf_session_entity/tf_session_entity_io.h"
 
-//===----------------------------------------------------------------------===//
-//
-//                         Peloton
-//
-// tf_session_entity_io.h
-//
-// Identification:
-// src/include/brain/util/tf_session_entity/tf_session_entity_io.h
-//
-// Copyright (c) 2015-2018, Carnegie Mellon University Database Group
-//
-//===----------------------------------------------------------------------===//
 
 
 #include <tensorflow/c/c_api.h>
@@ -38,7 +16,7 @@
 #define TFSEIO_BASE_TEMPLATE_ARGUMENTS template <typename N>
 #define TFSEIO_BASE_TYPE TfSessionEntityIOBase<N>
 
-namespace peloton {
+namespace LionBrain {
 namespace brain {
 
 /**
@@ -98,4 +76,4 @@ TF_Tensor *&TFSEIO_BASE_TYPE::GetTensor() { return tensor_; }
 template class TfSessionEntityIOBase<float>;
 
 }  // namespace brain
-}  // namespace peloton
+}  // namespace LionBrain

@@ -8,6 +8,7 @@
 #include "common/Message.h"
 #include "common/MessagePiece.h"
 #include "common/MyMove.h"
+#include "common/ShareQueue.h"
 #include <deque>
 
 #include <thread>
@@ -35,6 +36,18 @@ public:
 #endif
   }
 
+  static int pin_process_to_core(const Context &context, std::size_t core_id) {
+#ifndef __APPLE__
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(core_id, &cpuset);
+    int rc =
+        sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
+    // CHECK(rc == 0) << rc;
+    return core_id;
+#endif
+  }
+
   static void pin_thread_to_core(const Context &context, std::thread &t, std::size_t core_id) {
 #ifndef __APPLE__
     cpu_set_t cpuset;
@@ -47,7 +60,8 @@ public:
 #endif
   }
   static std::size_t new_router_transaction_message(Message &message, int table_id, 
-                                                    simpleTransaction& txn, uint64_t op){
+                                                    simpleTransaction& txn, 
+                                                    RouterTxnOps op){
     // 
     // op = src_coordinator_id
     auto& update_ = txn.update; // txn->get_query_update();
@@ -55,10 +69,23 @@ public:
     uint64_t txn_size = (uint64_t)key_.size();
     auto key_size = sizeof(uint64_t);
     uint64_t is_distributed = txn.is_distributed;
+    uint64_t is_real_distributed = txn.is_real_distributed;
     uint64_t is_transmit_request = txn.is_transmit_request;
+    uint64_t txn_id = txn.idx_;
+    uint64_t global_txn_id = txn.global_id_;
+
+    int on_replica_id = txn.on_replica_id;
+    int destination_coordinator  = txn.destination_coordinator;
 
     auto message_size =
-        MessagePiece::get_header_size() + sizeof(op) + sizeof(is_distributed) + sizeof(is_transmit_request) + 
+        MessagePiece::get_header_size() + sizeof(op) + 
+                      sizeof(is_distributed) + 
+                      sizeof(is_real_distributed) + 
+                      sizeof(is_transmit_request) + 
+                      sizeof(txn_id) + 
+                      sizeof(global_txn_id) + 
+                      sizeof(on_replica_id) + 
+                      sizeof(destination_coordinator) + 
                       sizeof(txn_size) + (key_size + sizeof(bool)) * txn_size;
     auto message_piece_header = MessagePiece::construct_message_piece_header(
         static_cast<uint32_t>(ControlMessage::ROUTER_TRANSACTION_REQUEST), message_size,
@@ -66,7 +93,16 @@ public:
 
     Encoder encoder(message.data);
     encoder << message_piece_header;
-    encoder << op << is_distributed << is_transmit_request << txn_size;
+    encoder << op 
+            << is_distributed 
+            << is_real_distributed 
+            << is_transmit_request 
+            << txn_id         
+            << global_txn_id     
+            << on_replica_id 
+            << destination_coordinator 
+            << txn_size;
+
     for(size_t i = 0 ; i < txn_size; i ++ ){
       uint64_t key = key_[i];
       bool update = update_[i];
@@ -75,7 +111,7 @@ public:
 //      LOG(INFO) <<  key_[i] << " " << update_[i];
     }
     message.flush();
-    VLOG(DEBUG_V14) << " SEND ROUTER " << message.get_source_node_id() << " " << message.get_dest_node_id() << is_distributed << "  " << is_transmit_request << " " << txn.keys[0] << " " << txn.keys[1];
+    // VLOG(DEBUG_V14) << " SEND ROUTER " << message.get_source_node_id() << " " << message.get_dest_node_id() << is_distributed << "  " << is_transmit_request << " " << txn.keys[0] << " " << txn.keys[1];
     return message_size;
   }
 
@@ -270,33 +306,62 @@ template <class Database> class ControlMessageHandler {
 public:
   static void router_transaction_handler(MessagePiece inputPiece,
                                       Message &responseMessage, Database &db,
-                                      std::deque<simpleTransaction>* router_txn_queue,
+                                      ShareQueue<simpleTransaction>* router_txn_queue,
                                       std::deque<int>* stop_queue
 ) {
     DCHECK(inputPiece.get_message_type() ==
            static_cast<uint32_t>(ControlMessage::ROUTER_TRANSACTION_REQUEST));
 
     auto stringPiece = inputPiece.toStringPiece();
-    uint64_t txn_size, op, is_distributed, is_transmit_request;
+    uint64_t txn_size, is_distributed, is_real_distributed, is_transmit_request;
+    RouterTxnOps op;
+    uint64_t txn_id, global_txn_id;
+    
+    int on_replica_id;
+    int destination_coordinator;
     simpleTransaction new_router_txn;
 
     // get op
-    op = *(uint64_t*)stringPiece.data();
+    op = *(RouterTxnOps*)stringPiece.data();
     stringPiece.remove_prefix(sizeof(op));
 
     // 
     is_distributed = *(uint64_t*)stringPiece.data();
     stringPiece.remove_prefix(sizeof(is_distributed));
 
+    is_real_distributed = *(uint64_t*)stringPiece.data();
+    stringPiece.remove_prefix(sizeof(is_real_distributed));
+
     is_transmit_request = *(uint64_t*)stringPiece.data();
     stringPiece.remove_prefix(sizeof(is_transmit_request));
+
+    txn_id = *(uint64_t*)stringPiece.data();
+    stringPiece.remove_prefix(sizeof(txn_id));
+
+    global_txn_id = *(uint64_t*)stringPiece.data();
+    stringPiece.remove_prefix(sizeof(global_txn_id));
+
+    on_replica_id = *(int*)stringPiece.data();
+    stringPiece.remove_prefix(sizeof(on_replica_id));
+
+    destination_coordinator = *(int*)stringPiece.data();
+    stringPiece.remove_prefix(sizeof(destination_coordinator));
 
     // get key_size
     txn_size = *(uint64_t*)stringPiece.data();
     stringPiece.remove_prefix(sizeof(txn_size));
 
     DCHECK(inputPiece.get_message_length() ==
-           MessagePiece::get_header_size() + sizeof(op) + sizeof(is_distributed) + sizeof(is_transmit_request) + sizeof(txn_size) + 
+           MessagePiece::get_header_size() + 
+           sizeof(op) + 
+           sizeof(is_distributed) + 
+           sizeof(is_real_distributed) + 
+           sizeof(is_transmit_request) + 
+           sizeof(txn_id) + 
+           sizeof(global_txn_id) + 
+           sizeof(on_replica_id) + 
+           sizeof(destination_coordinator) + 
+           sizeof(txn_size) + 
            (sizeof(uint64_t) + sizeof(bool)) * txn_size) ;
 
     star::Decoder dec(stringPiece);
@@ -317,15 +382,26 @@ public:
     new_router_txn.op = static_cast<RouterTxnOps>(op);
     new_router_txn.size = inputPiece.get_message_length();
     new_router_txn.is_distributed = is_distributed;
+    new_router_txn.is_real_distributed = is_real_distributed;
     new_router_txn.is_transmit_request = is_transmit_request;
-    VLOG(DEBUG_V14) << " GET ROUTER " << is_transmit_request << " " << is_distributed << " " << new_router_txn.keys[0] << " " << new_router_txn.keys[1];
-    router_txn_queue->push_back(new_router_txn);
+    new_router_txn.idx_ = txn_id;
+    new_router_txn.global_id_ = global_txn_id;
+    new_router_txn.on_replica_id = on_replica_id;
+    new_router_txn.destination_coordinator = destination_coordinator;
+    // VLOG(DEBUG_V14) << " GET ROUTER " << is_transmit_request << " " << 
+    //                                      is_distributed      << " " << 
+    //                                      on_replica_id       << " " <<
+    //                                      destination_coordinator << " " <<
+    //                                      new_router_txn.keys[0]  << " " << 
+    //                                      new_router_txn.keys[1];
+    router_txn_queue->push_no_wait(new_router_txn);
+    // DCHECK(ok == true);
 
   }
   
   static void router_transaction_response_handler(MessagePiece inputPiece,
                                       Message &responseMessage, Database &db,
-                                      std::deque<simpleTransaction>* router_txn_queue,
+                                      ShareQueue<simpleTransaction>* router_txn_queue,
                                       std::deque<int>* stop_queue
 ) {
     DCHECK(inputPiece.get_message_type() ==
@@ -336,7 +412,7 @@ public:
 
   static void router_stop_handler(MessagePiece inputPiece,
                                       Message &responseMessage, Database &db,
-                                      std::deque<simpleTransaction>* router_txn_queue,
+                                      ShareQueue<simpleTransaction>* router_txn_queue,
                                       std::deque<int>* stop_queue
 ) {
     DCHECK(inputPiece.get_message_type() ==
@@ -347,15 +423,15 @@ public:
     star::Decoder dec(stringPiece);
     dec >> send_txn_cnt;
     stop_queue->push_back(send_txn_cnt);
-    VLOG(DEBUG_V12) << "GET ROUTER_STOP " << stop_queue->size();
+    // LOG(INFO) << "GET ROUTER_STOP " << stop_queue->size();
     return;
 
 }
   static std::vector<
-      std::function<void(MessagePiece, Message &, Database &, std::deque<simpleTransaction>*, std::deque<int>* )>>
+      std::function<void(MessagePiece, Message &, Database &, ShareQueue<simpleTransaction>*, std::deque<int>* )>>
   get_message_handlers() {
     std::vector<
-        std::function<void(MessagePiece, Message &, Database &, std::deque<simpleTransaction>*,  std::deque<int>* )>>
+        std::function<void(MessagePiece, Message &, Database &, ShareQueue<simpleTransaction>*,  std::deque<int>* )>>
         v;
     v.resize(static_cast<int>(ControlMessage::NFIELDS) - 3);
     v.push_back(ControlMessageHandler::router_transaction_handler);
