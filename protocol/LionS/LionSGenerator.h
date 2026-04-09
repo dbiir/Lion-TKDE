@@ -152,10 +152,6 @@ public:
       int workload_type_num = 4;
       int workload_type = ((int)cur_timestamp / context.workload_time % workload_type_num);
 
-
-
-      
-
       switch (workload_type)
       {
       case 0:
@@ -192,26 +188,24 @@ public:
         // 0 < 50
         //正常
       }
-      // 
-      std::size_t partition_id_;
-      if(context.skew_factor >= skew_factor) {
-        std::size_t hot_area_size = context.partition_num / context.coordinator_num;
-        partition_id_ = partition_id / hot_area_size * hot_area_size + workload_type;
 
+      std::size_t partition_id_;
+      std::size_t hot_area_size = context.partition_num / context.coordinator_num;
+      if(context.skew_factor >= skew_factor) {
+        partition_id_ = partition_id / hot_area_size * hot_area_size + workload_type;
       } else {
-        std::size_t hot_area_size = context.partition_num / context.coordinator_num;
         partition_id_ = partition_id / hot_area_size * hot_area_size + 
-                                partition_id / hot_area_size % context.coordinator_num;;
+                                partition_id / hot_area_size % context.coordinator_num;
       }
 
-      // 
+
       std::unique_ptr<TransactionType> cur_transaction = workload.next_transaction(context, partition_id_, storage);
       
       simpleTransaction* txn = new simpleTransaction();
       txn->keys = cur_transaction->get_query();
       txn->update = cur_transaction->get_query_update();
       txn->partition_id = cur_transaction->get_partition_id();
-      // 
+
       bool is_cross_txn_static  = cur_transaction->check_cross_node_txn(false);
       if(is_cross_txn_static){
         txn->is_distributed = true;

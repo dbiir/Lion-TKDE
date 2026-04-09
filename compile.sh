@@ -1,8 +1,12 @@
 #!/bin/bash
 
-rm -rf CMakeFiles/ CMakeCache.txt 
-cmake -DCMAKE_BUILD_TYPE=Debug 
+set -e
+
+BUILD_DIR="build"
+
+mkdir -p "$BUILD_DIR"
+cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release 
 # -DCMAKE_CXX_FLAGS=-pg
-make -j 8
+cmake --build "$BUILD_DIR" -j8
 
 # ./sync.bash

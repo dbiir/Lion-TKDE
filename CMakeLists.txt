@@ -34,13 +34,13 @@ add_library(common STATIC ${COMMON_SOURCE_FILES} ${ALL_SOURCE_FILES})
     # find_package(glog REQUIRED)
     # set(gflags_NAMES libgflags.a)
     # find_package(gflags REQUIRED)
-    set(glog "/usr/local/lib/libglog.a")
-    set(gflags "/usr/local/lib/libgflags.so")
-    set(TFlowC_LIBRARIES "/usr/local/lib/libtensorflow.so")
-    set(TFlowC_FRAMEWORK_LIBRARIES "/usr/local/lib/libtensorflow_framework.so")
-    set(GMOCK_LIBRARIES "/usr/local/lib/libgmock.a")
-    set(GTEST_LIBRARIES "/usr/local/lib/libgtest.a")
-    set(METIS_LIBRARIES "/usr/local/lib/libmetis.a")
+    find_library(GLOG_LIBRARIES glog)
+    find_library(GFLAGS_LIBRARIES gflags)
+    find_library(GMOCK_LIBRARIES gmock)
+    find_library(GTEST_LIBRARIES gtest)
+    find_library(METIS_LIBRARIES metis)
+    find_library(TFlowC_LIBRARIES tensorflow HINTS /usr/local/lib)
+    find_library(TFlowC_FRAMEWORK_LIBRARIES tensorflow_framework HINTS /usr/local/lib)
 
 
     target_link_libraries(common ${jemalloc_lib} ${glog} ${gflags} 
@@ -59,12 +59,25 @@ add_library(common STATIC ${COMMON_SOURCE_FILES} ${ALL_SOURCE_FILES})
 
 add_executable(bench_ycsb bench_ycsb.cpp)
 target_link_libraries(bench_ycsb common 
-                    ${jemalloc_lib} ${glog} ${gflags} 
+                    ${jemalloc_lib} ${GLOG_LIBRARIES} ${GFLAGS_LIBRARIES} 
                     ${TFlowC_LIBRARIES} ${TFlowC_FRAMEWORK_LIBRARIES}
                     ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES} 
                     ${METIS_LIBRARIES}) # -static
 
 
+add_executable(lion bench_ycsb.cpp)
+target_link_libraries(lion common 
+                    ${jemalloc_lib} ${GLOG_LIBRARIES} ${GFLAGS_LIBRARIES} 
+                    ${TFlowC_LIBRARIES} ${TFlowC_FRAMEWORK_LIBRARIES}
+                    ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES} 
+                    ${METIS_LIBRARIES}) # -static
+
+add_executable(lion_metis metis_test.cpp)
+target_link_libraries(lion_metis common 
+                    ${jemalloc_lib} ${GLOG_LIBRARIES} ${GFLAGS_LIBRARIES} 
+                    ${TFlowC_LIBRARIES} ${TFlowC_FRAMEWORK_LIBRARIES}
+                    ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES} 
+                    ${METIS_LIBRARIES}) # -static
 
 # add_executable(bench_tpcc bench_tpcc.cpp)
 # target_link_libraries(bench_tpcc common 
