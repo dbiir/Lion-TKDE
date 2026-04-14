@@ -210,10 +210,6 @@ public:
       int workload_type_num = 4;
       int workload_type = ((int)cur_timestamp / context.workload_time % workload_type_num);
 
-
-
-      
-
       switch (workload_type)
       {
       case 0:
@@ -259,7 +255,7 @@ public:
       } else {
         std::size_t hot_area_size = context.partition_num / context.coordinator_num;
         partition_id_ = partition_id / hot_area_size * hot_area_size + 
-                                partition_id / hot_area_size % context.coordinator_num;;
+                                partition_id / hot_area_size % context.coordinator_num;
       }
 
       // 

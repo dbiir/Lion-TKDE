@@ -71,7 +71,6 @@ public:
     int32_t key_range = partitionID;
     int factor = 10;
 
-    
     int workload_type = get_workload_type(context, cur_timestamp);
     int last_workload_type = get_workload_type(context, 
                                       std::max(0.0, cur_timestamp - 1.0 * context.workload_time / factor));
@@ -99,27 +98,27 @@ public:
 
     int cross_partition_probalility = context.crossPartitionProbability ; 
 
-      switch (workload_type)
-      {
-      case 0:
-        // context.skew_factor = 0;
-        cross_partition_probalility = 50;
-        break;
-      case 1:
-        // context.skew_factor = 80;
-        cross_partition_probalility = 50;
-        break;
-      case 2:
-        // context.skew_factor = 80;
-        cross_partition_probalility = 100;
-        break;
-      case 3:
-        // context.skew_factor = 80;
-        cross_partition_probalility = 100;
-        break;
-      default:
-        break;
-      }
+      // switch (workload_type)
+      // {
+      // case 0:
+      //   // context.skew_factor = 0;
+      //   cross_partition_probalility = 50;
+      //   break;
+      // case 1:
+      //   // context.skew_factor = 80;
+      //   cross_partition_probalility = 50;
+      //   break;
+      // case 2:
+      //   // context.skew_factor = 80;
+      //   cross_partition_probalility = 100;
+      //   break;
+      // case 3:
+      //   // context.skew_factor = 80;
+      //   cross_partition_probalility = 100;
+      //   break;
+      // default:
+      //   break;
+      // }
 
     if(cur_timestamp < context.init_time){
       cross_partition_probalility = 0;
@@ -176,9 +175,10 @@ public:
           }
 
           // 对应的几类偏移
-          key = (key_partition_num) * static_cast<int32_t>(context.keysPerPartition) 
-                + key_num * query_size + i
-                + 2 * my_threshold * static_cast<int>(context.keysPerPartition); 
+          key = key_partition_num * static_cast<int32_t>(context.keysPerPartition)
+            + (key_num * static_cast<int32_t>(query_size) + static_cast<int32_t>(i) 
+              + static_cast<int32_t>(2 * my_threshold * static_cast<int32_t>(context.keysPerPartition))) 
+              % static_cast<int32_t>(context.keysPerPartition);
           key = key % static_cast<int32_t>(context.keysPerPartition * context.partition_num);
         } else {
           key = first_key + i;

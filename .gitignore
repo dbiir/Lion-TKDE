@@ -26,7 +26,7 @@ cmake/*
 !third_party/
 
 # *.py
-
+revision_scripts/__pycache__/
 *.make
 *.txt
 *.cmake
