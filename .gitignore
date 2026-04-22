@@ -30,3 +30,4 @@ cmake/*
 *.make
 *.txt
 *.cmake
+brain/modelgen/data/
