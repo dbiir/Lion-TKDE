@@ -45,7 +45,7 @@ public:
     if (context.isUniform) {
       return static_cast<int32_t>(random.uniform_dist(0, total - 1));
     } else {
-      return static_cast<int32_t>(Zipf::globalZipf().value(random));
+      return static_cast<int32_t>(Zipf::globalZipf().value(random.next_double()));
     }
   }
 
@@ -68,7 +68,7 @@ public:
     if (context.isUniform) {
       return static_cast<int32_t>(random.uniform_dist(lo, hi));
     } else {
-      int32_t k = static_cast<int32_t>(Zipf::globalZipf().value(random));
+      int32_t k = static_cast<int32_t>(Zipf::globalZipf().value(random.next_double()));
       return static_cast<int32_t>(lo + static_cast<std::size_t>(k) % kpp);
     }
   }

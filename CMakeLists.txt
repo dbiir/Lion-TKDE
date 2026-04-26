@@ -22,7 +22,7 @@ file(GLOB_RECURSE ALL_SOURCE_FILES benchmark/*.h common/*.h core/*.h core/*.cpp 
 
 include_directories(${CMAKE_SOURCE_DIR})
 
-file(GLOB_RECURSE COMMON_SOURCE_FILES common/*.cpp)
+file(GLOB_RECURSE COMMON_SOURCE_FILES common/*.cpp benchmark/**/*.cpp)
 add_library(common STATIC ${COMMON_SOURCE_FILES} ${ALL_SOURCE_FILES})
 
 
