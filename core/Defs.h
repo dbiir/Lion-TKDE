@@ -45,7 +45,8 @@ enum class ExecutorStatus {
 
 enum myTestSet {
   YCSB,
-  TPCC
+  TPCC,
+  PPS
 };
 
 enum class TransactionResult { COMMIT, READY_TO_COMMIT, ABORT, ABORT_NORETRY, NOT_LOCAL_NORETRY, TRANSMIT_REQUEST };

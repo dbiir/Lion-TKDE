@@ -13,6 +13,7 @@
 
 #include "benchmark/tpcc/Workload.h"
 #include "benchmark/ycsb/Workload.h"
+#include "benchmark/pps/Workload.h"
 
 #include "protocol/TwoPL/TwoPL.h"
 #include "protocol/TwoPL/TwoPLExecutor.h"
@@ -126,6 +127,12 @@ public:
 
   // using KeyType = ycsb::ycsb::key;
   // using ValueType = ycsb::ycsb::value;
+};
+
+template <> class InferType<star::pps::Context> {
+public:
+  template <class Transaction>
+  using WorkloadType = star::pps::Workload<Transaction>;
 };
 
 class WorkerFactory {

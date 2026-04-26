@@ -58,10 +58,17 @@ add_library(common STATIC ${COMMON_SOURCE_FILES} ${ALL_SOURCE_FILES})
 # target_link_libraries(bench_tpcc common)
 
 add_executable(bench_ycsb bench_ycsb.cpp)
-target_link_libraries(bench_ycsb common 
-                    ${jemalloc_lib} ${GLOG_LIBRARIES} ${GFLAGS_LIBRARIES} 
+target_link_libraries(bench_ycsb common
+                    ${jemalloc_lib} ${GLOG_LIBRARIES} ${GFLAGS_LIBRARIES}
                     ${TFlowC_LIBRARIES} ${TFlowC_FRAMEWORK_LIBRARIES}
-                    ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES} 
+                    ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES}
+                    ${METIS_LIBRARIES}) # -static
+
+add_executable(bench_pps bench_pps.cpp)
+target_link_libraries(bench_pps common
+                    ${jemalloc_lib} ${GLOG_LIBRARIES} ${GFLAGS_LIBRARIES}
+                    ${TFlowC_LIBRARIES} ${TFlowC_FRAMEWORK_LIBRARIES}
+                    ${GMOCK_LIBRARIES} ${GTEST_LIBRARIES}
                     ${METIS_LIBRARIES}) # -static
 
 
