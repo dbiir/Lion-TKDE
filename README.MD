@@ -26,3 +26,10 @@ git clone https://github.com/luyi0619/star.git
 ```
 ./compile.sh
 ```
+
+PPS workload evaluation
+
+```shell
+./build/bench_pps --logtostderr=1 --id=0 --servers="127.0.0.1:10010;127.0.0.1:10011" --protocol=Lion --partition_num=12 --threads=12 --partitioner=Lion --cross_ratio=50 --zipf=0.0 --read_write_ratio=90 --batch_size=10000 --batch_flush=500 --lion_with_metis_init=1 --time_to_run=60 --workload_time=60 --sample_time_interval=3 --migration_only=0 --read_on_replica=true --random_router=0 > pps_0.log 2>&1 
+./build/bench_pps --logtostderr=1 --id=1 --servers="127.0.0.1:10010;127.0.0.1:10011" --protocol=Lion --partition_num=12 --threads=12 --partitioner=Lion --cross_ratio=50 --zipf=0.0 --read_write_ratio=90 --batch_size=10000 --batch_flush=500 --lion_with_metis_init=1 --time_to_run=60 --workload_time=60 --sample_time_interval=3 --migration_only=0 --read_on_replica=true --random_router=0 > pps_1.log 2>&1 
+```

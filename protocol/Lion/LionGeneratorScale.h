@@ -10,6 +10,7 @@
 #include "core/Delay.h"
 #include "core/Partitioner.h"
 #include "core/Worker.h"
+#include "protocol/Lion/PPSRouting.h"
 #include "glog/logging.h"
 #include <chrono>
 #include <algorithm>
@@ -476,6 +477,25 @@ public:
      return;
    }
 
+  void txn_nodes_involved_pps(simpleTransaction* t,
+                          std::vector<std::vector<int>>& txns_coord_cost_,
+                          std::vector<int>& busy_local,
+                          std::vector<int>& replicate_busy_local) {
+      lion::route_pps_transaction(
+          t, txns_coord_cost_, busy_local, replicate_busy_local,
+          context.coordinator_num, context.migration_only,
+          context.keysPerPartition, context.random_router > 0,
+          [this](std::size_t table_id, int32_t raw_key) {
+            auto *router_table = db.find_router_table(table_id);
+            auto *tab = static_cast<RouterValue *>(
+                router_table->search_value((void *)&raw_key));
+            return std::make_pair(
+                tab->get_dynamic_coordinator_id(),
+                tab->get_secondary_coordinator_id());
+          });
+     return;
+   }
+
 
 
 
@@ -595,6 +615,9 @@ public:
       if(WorkloadType::which_workload == myTestSet::YCSB){
         txn_nodes_involved(txn.get(), txns_coord_cost, 
                            busy_local, replicate_busy_local);
+      } else if(WorkloadType::which_workload == myTestSet::PPS){
+        txn_nodes_involved_pps(txn.get(), txns_coord_cost,
+                           busy_local, replicate_busy_local);
       } else {
         txn_nodes_involved_tpcc(txn.get(), txns_coord_cost, 
                            busy_local, replicate_busy_local);
@@ -656,7 +679,8 @@ public:
     // for(size_t i = 0 ; i < context.coordinator_num; i ++ ){
     //   LOG(INFO) <<" replicate_busy[" << i << "] = " << node_replica_busy[i];
     // }
-      if(WorkloadType::which_workload == myTestSet::YCSB){
+      if(WorkloadType::which_workload == myTestSet::YCSB ||
+         WorkloadType::which_workload == myTestSet::PPS){
         balance_master(aver_val, threshold);  
       } else {
         balance_master_tpcc(aver_val, threshold);  
