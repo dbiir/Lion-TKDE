@@ -77,7 +77,7 @@ public:
     router_transaction_done.store(0);
     router_transactions_send.store(0);
 
-    for(int i = 0 ; i < 20 ; i ++ ){
+    for(int i = 0 ; i < MAX_DISPATCHER_NUM ; i ++ ){
       is_full_signal_self[i].store(0);
     }
     DCHECK(id < context.worker_num);
@@ -831,9 +831,9 @@ protected:
   std::atomic<uint32_t> &n_complete_workers, &n_started_workers;
   calvin::ScheduleMeta &schedule_meta;
 
-  ShareQueue<simpleTransaction*, 19600> transactions_queue_self[MAX_COORDINATOR_NUM];
-  StorageType storages[MAX_COORDINATOR_NUM];
-  std::atomic<uint32_t> is_full_signal_self[MAX_COORDINATOR_NUM];
+  ShareQueue<simpleTransaction*, 19600> transactions_queue_self[MAX_DISPATCHER_NUM];
+  StorageType storages[MAX_DISPATCHER_NUM];
+  std::atomic<uint32_t> is_full_signal_self[MAX_DISPATCHER_NUM];
   std::atomic<int> coordinator_send[MAX_COORDINATOR_NUM];
 
 

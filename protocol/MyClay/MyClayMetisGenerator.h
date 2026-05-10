@@ -21,6 +21,7 @@ namespace star {
 namespace group_commit {
 
 #define MAX_COORDINATOR_NUM 80
+#define MAX_DISPATCHER_NUM 512
 
 
 template <class Workload, class Protocol> class MyClayMetisGenerator : public Worker {

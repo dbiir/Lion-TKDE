@@ -6,7 +6,7 @@
 namespace star {
 namespace pps {
 
-static constexpr std::size_t PPS_MAX_PARTS_PER_TXN = 20;
+static constexpr std::size_t PPS_MAX_PARTS_PER_TXN = 100;
 
 struct Storage {
   Storage() {

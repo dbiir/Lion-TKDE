@@ -960,9 +960,9 @@ protected:
   std::atomic<uint32_t> &n_complete_workers, &n_started_workers;
   clayss::ScheduleMeta &schedule_meta;
 
-  ShareQueue<simpleTransaction*, 19600> transactions_queue_self[MAX_COORDINATOR_NUM];
-  StorageType storages[MAX_COORDINATOR_NUM];
-  std::atomic<uint32_t> is_full_signal_self[MAX_COORDINATOR_NUM];
+  ShareQueue<simpleTransaction*, 19600> transactions_queue_self[MAX_DISPATCHER_NUM];
+  StorageType storages[MAX_DISPATCHER_NUM];
+  std::atomic<uint32_t> is_full_signal_self[MAX_DISPATCHER_NUM];
 
   std::atomic<uint32_t> is_inited;
   std::atomic<uint32_t> start_inited;

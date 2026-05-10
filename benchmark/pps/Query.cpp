@@ -5,6 +5,11 @@
 namespace star {
 namespace pps {
 
+// Out-of-class definitions required for ODR-use of static constexpr members (C++14)
+constexpr std::size_t parts::tableID;
+constexpr std::size_t products::tableID;
+constexpr std::size_t suppliers::tableID;
+
 PPSQuery makePPSQuery::operator()(const Context &context, std::size_t partitionID,
                                    Random &random, Database &db) const {
   PPSQuery query;
@@ -16,11 +21,30 @@ PPSQuery makePPSQuery::operator()(const Context &context, std::size_t partitionI
   int rwRoll   = random.uniform_dist(1, 100);
   bool isWrite = (rwRoll > context.readWriteRatio);
 
+  // Override partition selection with Zipf when skewed workload is enabled.
+  // This makes some partitions "hotter" than others, replacing the uniform
+  // random partition_id chosen by the upstream generator.
+  if (!context.isUniform) {
+    partitionID = static_cast<std::size_t>(
+        Zipf::partitionZipf().value(random.next_double()));
+  }
+
   if (isCross) {
     if (isWrite) {
       query.txn_type    = ORDER_PRODUCT;
       query.product_key = selectProductKey(context, random);
-      query.part_keys   = db.getProductParts(query.product_key);
+      if (context.isUniform) {
+        query.part_keys = db.getProductParts(query.product_key);
+      } else {
+        // Use the same Zipf offset as local transactions so cross-partition writes
+        // conflict with local reads/writes on the same hot keys.
+        std::size_t kpp = context.getKeysPerPartition(0);
+        std::size_t offset = static_cast<std::size_t>(
+            Zipf::offsetZipf().value(random.next_double())) % kpp;
+        for (std::size_t p = 0; p < context.partition_num; p++) {
+          query.part_keys.push_back(static_cast<int32_t>(p * kpp + offset));
+        }
+      }
     } else {
       int which = random.uniform_dist(0, 1);
       if (which == 0) {
@@ -41,7 +65,21 @@ PPSQuery makePPSQuery::operator()(const Context &context, std::size_t partitionI
         query.product_key = selectLocalProductKey(context, random, partitionID);
       } else {
         query.txn_type = UPDATE_PART;
-        query.part_key = selectLocalPartKey(context, random, partitionID);
+        if (context.isUniform) {
+          query.part_key = selectLocalPartKey(context, random, partitionID);
+        } else {
+          // Zipf mode: update partsPerProduct keys from the local partition,
+          // all drawn from offsetZipf. High theta concentrates writes on the
+          // same hot offsets across threads -> 2PL write-write conflicts ->
+          // throughput decreases monotonically with theta even at cross_ratio=0.
+          std::size_t kpp = context.getKeysPerPartition(0);
+          std::size_t lo  = partitionID * kpp;
+          for (std::size_t j = 0; j < context.partsPerProduct; j++) {
+            std::size_t offset = static_cast<std::size_t>(
+                Zipf::offsetZipf().value(random.next_double())) % kpp;
+            query.part_keys.push_back(static_cast<int32_t>(lo + offset));
+          }
+        }
       }
     } else {
       int which = random.uniform_dist(0, 2);

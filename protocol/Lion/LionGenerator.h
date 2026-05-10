@@ -21,6 +21,7 @@ namespace star {
 namespace group_commit {
 
 #define MAX_COORDINATOR_NUM 80
+#define MAX_DISPATCHER_NUM 512
 
 
 template <class Workload, class Protocol> class LionGenerator : public Worker {
@@ -81,7 +82,7 @@ public:
     router_transaction_done.store(0);
     router_transactions_send.store(0);
 
-    for(int i = 0 ; i < 20 ; i ++ ){
+    for(int i = 0 ; i < MAX_DISPATCHER_NUM ; i ++ ){
       is_full_signal_self[i].store(0);
     }
     DCHECK(id < context.worker_num);
@@ -255,9 +256,10 @@ public:
 
       } else {
         std::size_t hot_area_size = context.partition_num / context.coordinator_num;
-        partition_id_ = partition_id / hot_area_size * hot_area_size + 
+        partition_id_ = partition_id / hot_area_size * hot_area_size +
                                 partition_id / hot_area_size % context.coordinator_num;
       }
+      partition_id_ = partition_id_ % context.partition_num;
 
       // 
       std::unique_ptr<TransactionType> cur_transaction = workload.next_transaction(context, partition_id_, storage);
@@ -1395,9 +1397,9 @@ protected:
   std::atomic<uint32_t> &skip_s_phase;
   lion::ScheduleMeta &schedule_meta;
 
-  ShareQueue<simpleTransaction*, 19600> transactions_queue_self[MAX_COORDINATOR_NUM];
-  StorageType storages[MAX_COORDINATOR_NUM];
-  std::atomic<uint32_t> is_full_signal_self[MAX_COORDINATOR_NUM];
+  ShareQueue<simpleTransaction*, 19600> transactions_queue_self[MAX_DISPATCHER_NUM];
+  StorageType storages[MAX_DISPATCHER_NUM];
+  std::atomic<uint32_t> is_full_signal_self[MAX_DISPATCHER_NUM];
   std::atomic<int> coordinator_send[MAX_COORDINATOR_NUM];
 
   

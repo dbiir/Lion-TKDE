@@ -207,11 +207,6 @@ public:
 
     } else if (context.protocol == "Star") {
 
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In Star, each partition is managed by only one thread.";
-
       using TransactionType = star::SiloTransaction;
       using WorkloadType =
           typename InferType<Context>::template WorkloadType<TransactionType>;
@@ -237,15 +232,10 @@ public:
 
     } else if (context.protocol.find("Lion") != context.protocol.npos) {
 
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In Lion, each partition is managed by only one thread.";
-
       using TransactionType = star::LionTransaction ;// TwoPLTransaction;
       using WorkloadType =
           typename InferType<Context>::template WorkloadType<TransactionType>;
-      using DatabaseType = 
+      using DatabaseType =
           typename WorkloadType::DatabaseType;
 
       int manager_thread_id = context.worker_num;
@@ -259,7 +249,7 @@ public:
       // add recorder for data-transformation
       // auto recorder = std::make_shared<LionRecorder<WorkloadType> >(
       //     coordinator_id, context.worker_num + 1, context, stop_flag, db,
-      //     manager->recorder_status, manager->transmit_status, 
+      //     manager->recorder_status, manager->transmit_status,
       //     manager->n_completed_workers, manager->n_started_workers);
 
       for (auto i = 0u; i < context.worker_num; i++) {
@@ -272,7 +262,7 @@ public:
             manager->txn_meta
             )); // , manager->recorder_status // recorder->data_pack_map
       }
-      // 
+      //
       // if(context.lion_with_metis_init){
         workers.push_back(std::make_shared<LionMetisExecutor<WorkloadType>>(
             coordinator_id, workers.size(), db, context,
@@ -283,18 +273,14 @@ public:
 
 
       workers.push_back(manager);
-      // workers.push_back(recorder);  
+      // workers.push_back(recorder);
     }  else if (context.protocol.find("LIONS") != context.protocol.npos) {
 
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In Lion, each partition is managed by only one thread.";
 
       using TransactionType = star::LionTransaction ;// TwoPLTransaction;
       using WorkloadType =
           typename InferType<Context>::template WorkloadType<TransactionType>;
-      using DatabaseType = 
+      using DatabaseType =
           typename WorkloadType::DatabaseType;
 
       int manager_thread_id = context.worker_num;
@@ -305,25 +291,20 @@ public:
 
       for (auto i = 0u; i < context.worker_num; i++) {
         workers.push_back(std::make_shared<LionSExecutor<WorkloadType, Lion<DatabaseType>>>(
-            coordinator_id, i, db, 
+            coordinator_id, i, db,
             context, manager->worker_status,
-            manager->n_completed_workers, 
+            manager->n_completed_workers,
             manager->n_started_workers));
       }
-      // 
+      //
       // workers.push_back(std::make_shared<LionMetisExecutor<WorkloadType>>(
       //       coordinator_id, workers.size(), db, context,
       //       manager->worker_status, manager->n_completed_workers,
       //       manager->n_started_workers));
 
       workers.push_back(manager);
-      // workers.push_back(recorder);  
+      // workers.push_back(recorder);
     } else if (context.protocol.find("LION-S") != context.protocol.npos) {
-
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In Lion, each partition is managed by only one thread.";
 
       using TransactionType = star::LionSSTransaction ;// TwoPLTransaction;
       using WorkloadType =
@@ -355,11 +336,6 @@ public:
       workers.push_back(manager);
       // workers.push_back(recorder);  
     } else if (context.protocol.find("CLAY-S") != context.protocol.npos) {
-
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In Lion, each partition is managed by only one thread.";
 
       using TransactionType = star::ClaySSTransaction ;// TwoPLTransaction;
       using WorkloadType =
@@ -523,10 +499,6 @@ public:
       workers.push_back(manager);
     }
     else if (context.protocol == "MyClay") {
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In MyClay, each partition is managed by only one thread.";
 
       using TransactionType = star::MyClayTransaction ;// TwoPLTransaction;
       using WorkloadType =
@@ -638,15 +610,10 @@ public:
     }
     else if (context.protocol.find("Lion") != context.protocol.npos) {
 
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In Lion, each partition is managed by only one thread.";
-
       using TransactionType = star::LionTransaction ;// TwoPLTransaction;
       using WorkloadType =
           typename InferType<Context>::template WorkloadType<TransactionType>;
-      using DatabaseType = 
+      using DatabaseType =
           typename WorkloadType::DatabaseType;
 
       int manager_thread_id = context.worker_num + 1;
@@ -670,11 +637,6 @@ public:
       workers.push_back(manager);
       // workers.push_back(recorder);  
     } else if (context.protocol.find("LIONS") != context.protocol.npos) {
-
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In Lion, each partition is managed by only one thread.";
 
       using TransactionType = star::LionTransaction ;// TwoPLTransaction;
       using WorkloadType =
@@ -702,11 +664,6 @@ public:
       workers.push_back(manager);
       // workers.push_back(recorder);  
     } else if (context.protocol.find("LION-S") != context.protocol.npos) {
-
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In Lion, each partition is managed by only one thread.";
 
       using TransactionType = star::LionSSTransaction ;// TwoPLTransaction;
       using WorkloadType =
@@ -737,11 +694,6 @@ public:
       // workers.push_back(recorder);  
     } else if (context.protocol.find("CLAY-S") != context.protocol.npos) {
 
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In Clay, each partition is managed by only one thread.";
-
       using TransactionType = star::ClaySSTransaction ;// TwoPLTransaction;
       using WorkloadType =
           typename InferType<Context>::template WorkloadType<TransactionType>;
@@ -771,10 +723,6 @@ public:
       // workers.push_back(recorder);  
     }
     else if (context.protocol == "MyClay") {
-      CHECK(context.partition_num %
-                (context.worker_num * context.coordinator_num) ==
-            0)
-          << "In MyClay, each partition is managed by only one thread.";
 
       using TransactionType = star::MyClayTransaction ;// TwoPLTransaction;
       using WorkloadType =

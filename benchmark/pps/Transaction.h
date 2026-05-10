@@ -204,9 +204,21 @@ public:
                      static_cast<uint32_t>(query.product_key));
       break;
     case UPDATE_PART:
-      keys.push_back((tt64 << 48) |
-                     (static_cast<uint64_t>(parts::tableID) << 32) |
-                     static_cast<uint32_t>(query.part_key));
+      if (query.part_keys.empty()) {
+        // uniform: single key
+        keys.push_back((tt64 << 48) |
+                       (static_cast<uint64_t>(parts::tableID) << 32) |
+                       static_cast<uint32_t>(query.part_key));
+      } else {
+        // Zipf: multi-key local batch; first entry carries txn_type in high bits
+        keys.push_back((tt64 << 48) |
+                       (static_cast<uint64_t>(parts::tableID) << 32) |
+                       static_cast<uint32_t>(query.part_keys[0]));
+        for (std::size_t i = 1; i < query.part_keys.size(); i++) {
+          keys.push_back((static_cast<uint64_t>(parts::tableID) << 32) |
+                         static_cast<uint32_t>(query.part_keys[i]));
+        }
+      }
       break;
     default:
       DCHECK(false);
@@ -229,7 +241,13 @@ public:
       upd.push_back(true);
       break;
     case UPDATE_PART:
-      upd.push_back(true);
+      if (query.part_keys.empty()) {
+        upd.push_back(true);
+      } else {
+        for (std::size_t i = 0; i < query.part_keys.size(); i++) {
+          upd.push_back(true);
+        }
+      }
       break;
     default:
       // read-only: all false
@@ -448,7 +466,13 @@ private:
       issueProductUpdate(query.product_key);
       break;
     case UPDATE_PART:
-      issuePartUpdate(0, query.part_key);
+      if (query.part_keys.empty()) {
+        issuePartUpdate(0, query.part_key);
+      } else {
+        for (std::size_t i = 0; i < query.part_keys.size(); i++) {
+          issuePartUpdate(i, query.part_keys[i]);
+        }
+      }
       break;
     default:
       DCHECK(false);
@@ -486,13 +510,24 @@ private:
       }
       break;
     case UPDATE_PART:
-      storage.parts_values[0].P_AMOUNT++;
-      {
-        std::size_t pid = static_cast<std::size_t>(query.part_key) /
-                          context.getKeysPerPartition(parts::tableID);
-        this->update(parts::tableID, pid,
-                     storage.parts_keys[0],
-                     storage.parts_values[0]);
+      if (query.part_keys.empty()) {
+        storage.parts_values[0].P_AMOUNT++;
+        {
+          std::size_t pid = static_cast<std::size_t>(query.part_key) /
+                            context.getKeysPerPartition(parts::tableID);
+          this->update(parts::tableID, pid,
+                       storage.parts_keys[0],
+                       storage.parts_values[0]);
+        }
+      } else {
+        for (std::size_t i = 0; i < query.part_keys.size(); i++) {
+          storage.parts_values[i].P_AMOUNT++;
+          std::size_t pid = static_cast<std::size_t>(query.part_keys[i]) /
+                            context.getKeysPerPartition(parts::tableID);
+          this->update(parts::tableID, pid,
+                       storage.parts_keys[i],
+                       storage.parts_values[i]);
+        }
       }
       break;
     default:

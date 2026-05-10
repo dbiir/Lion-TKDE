@@ -72,7 +72,7 @@ public:
     // router_transaction_done.store(0);
     // router_transactions_send.store(0);
 
-    for(int i = 0 ; i < 20 ; i ++ ){
+    for(int i = 0 ; i < MAX_DISPATCHER_NUM ; i ++ ){
       is_full_signal_self[i].store(0);
     }
     DCHECK(id < context.worker_num);
@@ -314,6 +314,46 @@ public:
      return;
    }
 
+  void txn_nodes_involved_pps(simpleTransaction* t,
+                               std::vector<std::vector<int>>& txns_coord_cost) {
+    // PPS key encoding:
+    //   keys[0] = (txn_type << 48) | (table_id << 32) | raw_key
+    //   keys[i>0] = (table_id << 32) | raw_key
+    // Products (table_id=1) and Suppliers (table_id=2) have keysPerPartition/10 keys per partition.
+    int from_nodes_id[MAX_COORDINATOR_NUM] = {0};
+
+    int max_cnt = INT_MIN;
+    int max_node = -1;
+
+    auto& query_keys = t->keys;
+    for (size_t j = 0; j < query_keys.size(); j++) {
+      uint64_t encoded = query_keys[j];
+      if (j == 0) encoded &= 0x0000FFFFFFFFFFFFull; // strip txn_type from top 16 bits
+      size_t table_id = (encoded >> 32) & 0xFFFF;
+      int32_t raw_key = static_cast<int32_t>(encoded & 0xFFFFFFFF);
+
+      std::size_t kpp = (table_id == 0) ? context.keysPerPartition
+                                        : context.keysPerPartition / 10;
+      size_t cur_c_id = (raw_key / kpp) % context.coordinator_num;
+      from_nodes_id[cur_c_id] += 1;
+
+      int cur_score = 0;
+      size_t cnt_master = from_nodes_id[cur_c_id];
+      if (cnt_master == query_keys.size()) {
+        cur_score = 100 * (int)query_keys.size();
+      } else {
+        cur_score = 25 * (int)cnt_master;
+      }
+      if (cur_score > max_cnt) {
+        max_node = cur_c_id;
+        max_cnt = cur_score;
+      }
+    }
+
+    t->destination_coordinator = max_node;
+    t->execution_cost = 10 * (int)query_keys.size() - max_cnt;
+  }
+
   void txn_nodes_involved_tpcc(simpleTransaction* t, 
                           std::vector<std::vector<int>>& txns_coord_cost_) {
     
@@ -537,6 +577,8 @@ public:
           // determine its ideal destination
           if(WorkloadType::which_workload == myTestSet::YCSB){
             txn_nodes_involved(new_txn.get(), txns_coord_cost);
+          } else if(WorkloadType::which_workload == myTestSet::PPS){
+            txn_nodes_involved_pps(new_txn.get(), txns_coord_cost);
           } else {
             txn_nodes_involved_tpcc(new_txn.get(), txns_coord_cost);
           }
@@ -777,9 +819,9 @@ protected:
 
   silo::ScheduleMeta &schedule_meta;
 
-  ShareQueue<simpleTransaction*, 1960> transactions_queue_self[MAX_COORDINATOR_NUM];
-  StorageType storages[MAX_COORDINATOR_NUM];
-  std::atomic<uint32_t> is_full_signal_self[MAX_COORDINATOR_NUM];
+  ShareQueue<simpleTransaction*, 1960> transactions_queue_self[MAX_DISPATCHER_NUM];
+  StorageType storages[MAX_DISPATCHER_NUM];
+  std::atomic<uint32_t> is_full_signal_self[MAX_DISPATCHER_NUM];
   std::atomic<int> coordinator_send[MAX_COORDINATOR_NUM];
 
   std::unique_ptr<Partitioner> partitioner;

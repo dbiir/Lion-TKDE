@@ -51,15 +51,26 @@ public:
 
   static int32_t selectProductKey(const Context &context, Random &random) {
     std::size_t total = context.getTotalKeys(1);
-    return static_cast<int32_t>(random.uniform_dist(0, total - 1));
+    if (context.isUniform) {
+      return static_cast<int32_t>(random.uniform_dist(0, total - 1));
+    } else {
+      int32_t k = static_cast<int32_t>(Zipf::globalZipf().value(random.next_double()));
+      return static_cast<int32_t>(static_cast<std::size_t>(k) % total);
+    }
   }
 
   static int32_t selectSupplierKey(const Context &context, Random &random) {
     std::size_t total = context.getTotalKeys(2);
-    return static_cast<int32_t>(random.uniform_dist(0, total - 1));
+    if (context.isUniform) {
+      return static_cast<int32_t>(random.uniform_dist(0, total - 1));
+    } else {
+      int32_t k = static_cast<int32_t>(Zipf::globalZipf().value(random.next_double()));
+      return static_cast<int32_t>(static_cast<std::size_t>(k) % total);
+    }
   }
 
-  // Local part key: biased toward home partition
+  // Local part key: use offsetZipf to pick within-partition offset.
+  // Higher theta => offset near 0 => same hot keys as cross-partition txns => more conflicts.
   static int32_t selectLocalPartKey(const Context &context, Random &random,
                                      std::size_t partitionID) {
     std::size_t kpp = context.getKeysPerPartition(0);
@@ -68,8 +79,8 @@ public:
     if (context.isUniform) {
       return static_cast<int32_t>(random.uniform_dist(lo, hi));
     } else {
-      int32_t k = static_cast<int32_t>(Zipf::globalZipf().value(random.next_double()));
-      return static_cast<int32_t>(lo + static_cast<std::size_t>(k) % kpp);
+      std::size_t offset = static_cast<std::size_t>(Zipf::offsetZipf().value(random.next_double())) % kpp;
+      return static_cast<int32_t>(lo + offset);
     }
   }
 
@@ -77,16 +88,26 @@ public:
                                         std::size_t partitionID) {
     std::size_t kpp = context.getKeysPerPartition(1);
     std::size_t lo  = partitionID * kpp;
-    std::size_t hi  = lo + kpp - 1;
-    return static_cast<int32_t>(random.uniform_dist(lo, hi));
+    if (context.isUniform) {
+      return static_cast<int32_t>(random.uniform_dist(lo, lo + kpp - 1));
+    } else {
+      std::size_t offset = static_cast<std::size_t>(
+          Zipf::offsetZipf().value(random.next_double())) % kpp;
+      return static_cast<int32_t>(lo + offset);
+    }
   }
 
   static int32_t selectLocalSupplierKey(const Context &context, Random &random,
                                          std::size_t partitionID) {
     std::size_t kpp = context.getKeysPerPartition(2);
     std::size_t lo  = partitionID * kpp;
-    std::size_t hi  = lo + kpp - 1;
-    return static_cast<int32_t>(random.uniform_dist(lo, hi));
+    if (context.isUniform) {
+      return static_cast<int32_t>(random.uniform_dist(lo, lo + kpp - 1));
+    } else {
+      std::size_t offset = static_cast<std::size_t>(
+          Zipf::offsetZipf().value(random.next_double())) % kpp;
+      return static_cast<int32_t>(lo + offset);
+    }
   }
 
   // Primary query generation: called at transaction creation time

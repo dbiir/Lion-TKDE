@@ -73,7 +73,7 @@ public:
     router_transaction_done.store(0);
     router_transactions_send.store(0);
 
-    for(int i = 0 ; i < 20 ; i ++ ){
+    for(int i = 0 ; i < MAX_DISPATCHER_NUM ; i ++ ){
       is_full_signal_self[i].store(0);
     }
 
@@ -341,6 +341,70 @@ public:
      return;
    }
 
+  void txn_nodes_involved_pps(simpleTransaction* t) {
+    // PPS key encoding:
+    //   keys[0] = (txn_type << 48) | (table_id << 32) | raw_key
+    //   keys[i>0] = (table_id << 32) | raw_key
+    std::unordered_map<int, int> from_nodes_id;
+    std::unordered_map<int, int> from_nodes_id_secondary;
+    std::vector<int> coordi_nums_;
+
+    auto& query_keys = t->keys;
+    for (size_t j = 0; j < query_keys.size(); j++) {
+      uint64_t encoded = query_keys[j];
+      if (j == 0) encoded &= 0x0000FFFFFFFFFFFFull; // strip txn_type from top 16 bits
+      size_t table_id = (encoded >> 32) & 0xFFFF;
+      int32_t raw_key = static_cast<int32_t>(encoded & 0xFFFFFFFF);
+
+      auto router_table = db.find_router_table(table_id);
+      auto tab = static_cast<RouterValue*>(router_table->search_value((void*) &raw_key));
+      size_t cur_c_id = tab->get_dynamic_coordinator_id();
+      size_t secondary_c_ids = tab->get_secondary_coordinator_id();
+
+      if (!from_nodes_id.count(cur_c_id)) {
+        from_nodes_id[cur_c_id] = 1;
+        coordi_nums_.push_back(cur_c_id);
+      } else {
+        from_nodes_id[cur_c_id] += 1;
+      }
+      for (size_t i = 0; i <= context.coordinator_num; i++) {
+        if (secondary_c_ids & 1 && i != cur_c_id) {
+          from_nodes_id_secondary[i] += 1;
+        }
+        secondary_c_ids >>= 1;
+      }
+    }
+
+    int max_cnt = INT_MIN;
+    int max_node = -1;
+    for (size_t cur_c_id = 0; cur_c_id < context.coordinator_num; cur_c_id++) {
+      int cur_score = 0;
+      size_t cnt_master = from_nodes_id[cur_c_id];
+      if (cnt_master == query_keys.size()) {
+        cur_score = 100 * (int)query_keys.size();
+      } else {
+        cur_score = 25 * (int)cnt_master;
+      }
+      if (cur_score > max_cnt) {
+        max_node = cur_c_id;
+        max_cnt = cur_score;
+      }
+      txns_coord_cost[t->idx_][cur_c_id] = 10 * (int)query_keys.size() - cur_score;
+    }
+
+    if (context.random_router > 0) {
+      int coords_num = (int)coordi_nums_.size();
+      size_t random_value = random.uniform_dist(0, 100);
+      if (random_value > context.random_router) {
+        size_t random_coord_id = random.uniform_dist(0, coords_num - 1);
+        max_node = coordi_nums_[random_coord_id];
+      }
+    }
+
+    t->destination_coordinator = max_node;
+    t->execution_cost = 10 * (int)query_keys.size() - max_cnt;
+  }
+
   void txn_nodes_involved_tpcc(simpleTransaction* t) {
     
       int from_nodes_id[MAX_COORDINATOR_NUM] = {0};              // dynamic replica nums
@@ -492,6 +556,8 @@ public:
 
       if(WorkloadType::which_workload == myTestSet::YCSB){
         txn_nodes_involved(txn.get());
+      } else if(WorkloadType::which_workload == myTestSet::PPS){
+        txn_nodes_involved_pps(txn.get());
       } else {
         txn_nodes_involved_tpcc(txn.get());
       }
@@ -860,9 +926,9 @@ protected:
   std::atomic<uint32_t> &n_complete_workers, &n_started_workers;
   clay::ScheduleMeta &schedule_meta;
 
-  ShareQueue<simpleTransaction*, 40960> transactions_queue_self[MAX_COORDINATOR_NUM];
-  StorageType storages[MAX_COORDINATOR_NUM];
-  std::atomic<uint32_t> is_full_signal_self[MAX_COORDINATOR_NUM];
+  ShareQueue<simpleTransaction*, 40960> transactions_queue_self[MAX_DISPATCHER_NUM];
+  StorageType storages[MAX_DISPATCHER_NUM];
+  std::atomic<uint32_t> is_full_signal_self[MAX_DISPATCHER_NUM];
   std::atomic<int> coordinator_send[MAX_COORDINATOR_NUM];
 
   std::unique_ptr<Partitioner> partitioner;

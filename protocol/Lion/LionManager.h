@@ -15,6 +15,7 @@ namespace star {
 
 namespace lion {
 #define MAX_COORDINATOR_NUM 80
+#define MAX_DISPATCHER_NUM 512
 
 struct ScheduleMeta {
   ScheduleMeta(int coordinator_num, int batch_size){
@@ -77,8 +78,15 @@ struct TransactionMeta {
   TransactionMeta(int coordinator_num, int batch_size){
     this->batch_size = batch_size;
     this->coordinator_num = coordinator_num;
-    s_storages.resize(batch_size * coordinator_num * 2);
-    c_storages.resize(batch_size * coordinator_num * 2);
+    std::size_t max_txns = static_cast<std::size_t>(batch_size) * coordinator_num * 2;
+    s_storages.resize(max_txns);
+    c_storages.resize(max_txns);
+    // Pre-reserve transaction queues to prevent reallocation during concurrent push_back.
+    // Multiple executor threads call push_back under a lock but then write to their slot
+    // outside the lock — a reallocation would free the buffer while a thread is still
+    // writing to it, causing heap corruption.
+    s_transactions_queue.reserve(max_txns);
+    c_transactions_queue.reserve(max_txns);
     transactions_prepared.store(0);
     commit_num.store(0);
   }

@@ -237,6 +237,7 @@ def _pps_cmd(
     *,
     cross_ratio: int = 0,
     zipf: float = 0.0,
+    read_write_ratio: int = 80,
 ) -> str:
     partition_num = PARTITION_PER_NODE * n_nodes
     cmd = (
@@ -247,6 +248,7 @@ def _pps_cmd(
         f"--threads={THREADS} "
         f"--partitioner={cfg.partitioner} "
         f"--cross_ratio={cross_ratio} "
+        f"--read_write_ratio={read_write_ratio} "
         f"--zipf={zipf}"
     )
     if cfg.partitioner in _CLAY_LION_PARTITIONERS:
@@ -393,6 +395,7 @@ def dist_ratio_pps(
     distributions: list[str] | None = None,
     zipf_for_skew_dist: float = 0.9,
     zipf_for_normal_dist: float = 0.0,
+    read_write_ratio: int = 80,
 ) -> list[str]:
     """PPS: distribution-ratio sweep × distribution type × algorithm."""
     dist_list = ["skew", "normal"] if distributions is None else distributions
@@ -416,6 +419,7 @@ def dist_ratio_pps(
                 cfg,
                 cross_ratio=ratio,
                 zipf=zipf,
+                read_write_ratio=read_write_ratio,
             )
         )
     return cmds

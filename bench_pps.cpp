@@ -32,6 +32,8 @@ int main(int argc, char *argv[]) {
   if (FLAGS_zipf > 0) {
     context.isUniform = false;
     star::Zipf::globalZipf().init(context.keysPerPartition, FLAGS_zipf);
+    star::Zipf::offsetZipf().init(context.keysPerPartition, FLAGS_zipf);
+    star::Zipf::partitionZipf().init(context.partition_num, FLAGS_zipf);
   }
   DCHECK(context.peers.size() >= 2) << " The size of ip peers must gt 2.(At least one generator, one worker)";
 

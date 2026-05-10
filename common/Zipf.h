@@ -42,6 +42,20 @@ public:
     return z;
   }
 
+  // Offset Zipf: controls within-partition key offset.
+  // Higher theta => offset concentrated near 0 => more conflicts across transaction types.
+  static Zipf &offsetZipf() {
+    static Zipf z;
+    return z;
+  }
+
+  // Partition Zipf: skews partition selection for local transactions.
+  // Higher theta => more transactions target low-numbered partitions.
+  static Zipf &partitionZipf() {
+    static Zipf z;
+    return z;
+  }
+
 private:
   double zeta(int n) {
     DCHECK(hasInit);

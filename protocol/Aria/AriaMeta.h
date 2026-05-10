@@ -16,6 +16,7 @@ namespace star {
 namespace aria {
 
 #define MAX_COORDINATOR_NUM 80
+#define MAX_DISPATCHER_NUM 512
 
 struct ScheduleMeta {
   ScheduleMeta(int coordinator_num, int batch_size){

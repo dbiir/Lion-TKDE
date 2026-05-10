@@ -170,7 +170,10 @@ public:
           std::lock_guard<std::mutex> l(txn_meta.c_l);
           txn_id = txn_meta.c_transactions_queue.size();
           if(txn_id >= txn_meta.c_storages.size()){
-            DCHECK(false);
+            LOG(ERROR) << "unpack_route_transaction: txn_id " << txn_id
+                       << " >= c_storages.size() " << txn_meta.c_storages.size()
+                       << " — dropping routed transaction";
+            break;
           }
           txn_meta.c_transactions_queue.push_back(std::move(null_txn));
           txn_meta.c_txn_id_queue.push_no_wait(txn_id);

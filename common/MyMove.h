@@ -84,6 +84,7 @@ namespace star
 };
 
     #define MAX_COORDINATOR_NUM 80
+    #define MAX_DISPATCHER_NUM 512
     struct Clump {
         using T = u_int64_t;
     public:
