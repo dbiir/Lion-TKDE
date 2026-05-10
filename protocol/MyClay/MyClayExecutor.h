@@ -181,6 +181,7 @@ public:
             retry_transaction = false;
             protocol.abort(*transaction, sync_messages);
             n_abort_no_retry.fetch_add(1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
           } else {
             result = transaction->prepare_update_execute(id);
@@ -238,6 +239,7 @@ public:
             retry_transaction = false;
             // protocol.abort(*transaction, sync_messages);
             n_abort_no_retry.fetch_add(1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
           }
         } else if(result == TransactionResult::TRANSMIT_REQUEST){
           // pass
@@ -246,6 +248,7 @@ public:
         } else {
           protocol.abort(*transaction, sync_messages);
           n_abort_no_retry.fetch_add(1);
+          std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
           time3 += std::chrono::duration_cast<std::chrono::microseconds>(
