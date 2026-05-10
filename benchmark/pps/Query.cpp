@@ -1,6 +1,7 @@
 // benchmark/pps/Query.cpp
 #include "benchmark/pps/Query.h"
 #include "benchmark/pps/Database.h"
+DECLARE_double(zipf);
 
 namespace star {
 namespace pps {
@@ -9,6 +10,20 @@ namespace pps {
 constexpr std::size_t parts::tableID;
 constexpr std::size_t products::tableID;
 constexpr std::size_t suppliers::tableID;
+
+static const char* txnTypeName(PPSTxnType t) {
+  switch (t) {
+    case GET_PART:            return "GET_PART";
+    case GET_PRODUCT:         return "GET_PRODUCT";
+    case GET_SUPPLIER:        return "GET_SUPPLIER";
+    case GET_PART_BY_PRODUCT: return "GET_PART_BY_PRODUCT";
+    case GET_PART_BY_SUPPLIER:return "GET_PART_BY_SUPPLIER";
+    case ORDER_PRODUCT:       return "ORDER_PRODUCT";
+    case UPDATE_PRODUCT_PART: return "UPDATE_PRODUCT_PART";
+    case UPDATE_PART:         return "UPDATE_PART";
+    default:                  return "UNKNOWN";
+  }
+}
 
 PPSQuery makePPSQuery::operator()(const Context &context, std::size_t partitionID,
                                    Random &random, Database &db) const {
@@ -79,6 +94,7 @@ PPSQuery makePPSQuery::operator()(const Context &context, std::size_t partitionI
                 Zipf::offsetZipf().value(random.next_double())) % kpp;
             query.part_keys.push_back(static_cast<int32_t>(lo + offset));
           }
+          std::sort(query.part_keys.begin(), query.part_keys.end());
         }
       }
     } else {
@@ -94,6 +110,50 @@ PPSQuery makePPSQuery::operator()(const Context &context, std::size_t partitionI
         query.supplier_key = selectLocalSupplierKey(context, random, partitionID);
       }
     }
+  }
+
+  // 1% sampling log
+  if (random.uniform_dist(1, 100) == 1) {
+    std::string msg = "zipf=" + std::to_string(context.isUniform ? 0.0 : FLAGS_zipf)
+                    + " txn=" + txnTypeName(query.txn_type);
+    switch (query.txn_type) {
+      case GET_PART:
+      case UPDATE_PART:
+        msg += " parts:key=" + std::to_string(query.part_key)
+             + ",pid=" + std::to_string(context.getPartitionID(0, query.part_key));
+        break;
+      case GET_PRODUCT:
+      case UPDATE_PRODUCT_PART:
+        msg += " products:key=" + std::to_string(query.product_key)
+             + ",pid=" + std::to_string(context.getPartitionID(1, query.product_key));
+        break;
+      case GET_SUPPLIER:
+        msg += " suppliers:key=" + std::to_string(query.supplier_key)
+             + ",pid=" + std::to_string(context.getPartitionID(2, query.supplier_key));
+        break;
+      case GET_PART_BY_PRODUCT:
+      case ORDER_PRODUCT:
+        msg += " products:key=" + std::to_string(query.product_key)
+             + ",pid=" + std::to_string(context.getPartitionID(1, query.product_key));
+        break;
+      case GET_PART_BY_SUPPLIER:
+        msg += " suppliers:key=" + std::to_string(query.supplier_key)
+             + ",pid=" + std::to_string(context.getPartitionID(2, query.supplier_key));
+        break;
+      default:
+        msg += " unknown_txn_type";
+        break;
+    }
+    if (!query.part_keys.empty()) {
+      msg += " part_keys=[";
+      for (std::size_t i = 0; i < query.part_keys.size(); i++) {
+        if (i > 0) msg += ",";
+        msg += std::to_string(query.part_keys[i])
+             + "(pid=" + std::to_string(context.getPartitionID(0, query.part_keys[i])) + ")";
+      }
+      msg += "]";
+    }
+    // LOG(INFO) << msg;
   }
 
   return query;

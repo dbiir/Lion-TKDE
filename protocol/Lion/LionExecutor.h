@@ -573,6 +573,8 @@ public:
             // retry_transaction = false;
             protocol->abort(*transaction, sync_messages);
             n_abort_no_retry.fetch_add(1);
+            // LOG(INFO) << "Abort: "<< id;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
           } else {
             result = transaction->prepare_update_execute(id);
@@ -655,6 +657,9 @@ public:
           } else {
             n_abort_no_retry.fetch_add(1);
             protocol->abort(*transaction, sync_messages);
+            // retry_transaction = true;
+            LOG(INFO) << "Abort: "<< id;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
           }
         } while (retry_transaction);
       }
@@ -800,6 +805,8 @@ public:
           // retry_transaction = false;
           protocol->abort(*cur_trans[i], async_messages);
           n_abort_no_retry.fetch_add(1);
+          LOG(INFO) << "Abort: "<< id;
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
 
       } while (retry_transaction);

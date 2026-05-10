@@ -136,6 +136,7 @@ public:
             }
             random.set_seed(last_seed);
             retry_transaction = true;
+            std::this_thread::sleep_for(std::chrono::microseconds(1));
           }
         } else {
           protocol.abort(*transaction, messages);
